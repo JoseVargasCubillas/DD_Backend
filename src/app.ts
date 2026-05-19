@@ -1,0 +1,26 @@
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import { apiRoutes } from './atomic/pages/routes/index.js';
+
+const app = express();
+
+app.use(helmet());
+app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
+app.use(morgan('dev'));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+app.use('/api/v1', apiRoutes);
+
+app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date() }));
+
+app.use((_req, res) => res.status(404).json({ message: 'Route not found' }));
+
+app.use((err: Error & { statusCode?: number }, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const status = err.statusCode ?? 500;
+  res.status(status).json({ message: err.message ?? 'Internal server error' });
+});
+
+export default app;
