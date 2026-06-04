@@ -14,7 +14,10 @@ export const list: RequestHandler = async (req, res) => {
     const { page, limit, status } = req.query as Record<string, string>;
     const result = await eventService.listEvents({ page: +page || 1, limit: +limit || 10, status });
     paginated(res, result.events, { total: result.total, page: result.page, pages: result.pages });
-  } catch (err: any) { serverError(res, err); }
+  } catch (err: any) {
+    console.error('[Events.list] Error:', err.message, err.stack);
+    serverError(res, err);
+  }
 };
 
 export const getBySlug: RequestHandler = async (req, res) => {
