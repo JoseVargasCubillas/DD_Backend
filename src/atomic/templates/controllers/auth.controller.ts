@@ -37,3 +37,17 @@ export const refresh: RequestHandler = async (req, res) => {
 };
 
 export const me: RequestHandler = (req, res) => success(res, (req as any).user);
+
+// Admin: crear cuenta de cliente y enviar credenciales por correo.
+export const adminCreateUser: RequestHandler = async (req, res) => {
+  const { name, email, role } = req.body as { name?: string; email?: string; role?: 'user' | 'admin' };
+  if (!name || !email) { badRequest(res, 'name y email son requeridos'); return; }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { badRequest(res, 'Email inválido'); return; }
+  try {
+    const result = await authService.adminCreateUser({ name, email, role });
+    created(res, result);
+  } catch (err: any) {
+    err.statusCode === 409 ? badRequest(res, err.message) : serverError(res, err);
+  }
+};
+

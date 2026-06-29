@@ -6,6 +6,7 @@ import { createCourseValidator } from '../../atoms/validators/course.validator.j
 
 const router = Router();
 router.get('/', courseController.list);
+router.get('/admin/:id', authenticate, requireAdmin, courseController.getByIdAdmin);
 router.get('/:slug', courseController.getBySlug);
 router.use(authenticate);
 router.post('/', requireAdmin, createCourseValidator, courseController.create);

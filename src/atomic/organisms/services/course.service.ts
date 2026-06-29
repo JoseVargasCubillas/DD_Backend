@@ -1,6 +1,8 @@
 import slugify from 'slugify';
 import { Course, ICourseDocument } from '../../molecules/models/course.model.js';
 import { User } from '../../molecules/models/user.model.js';
+import { Module } from '../../molecules/models/module.model.js';
+import { Lesson } from '../../molecules/models/lesson.model.js';
 import { COURSE_STATUS } from '../../atoms/constants/status.constant.js';
 
 const makeError = (msg: string, code: number): Error => Object.assign(new Error(msg), { statusCode: code });
@@ -10,7 +12,7 @@ interface CreateCourseInput {
   title: string; description: string; price: number; category: string;
   instructor: string; [key: string]: unknown;
 }
-interface ListCoursesParams { page?: number; limit?: number; category?: string; status?: string; search?: string }
+interface ListCoursesParams { page?: number; limit?: number; category?: string; status?: string; search?: string; includeAll?: boolean }
 
 export const createCourse = async (data: CreateCourseInput): Promise<ICourseDocument> => {
   const slug = makeSlug(data.title);
@@ -18,8 +20,10 @@ export const createCourse = async (data: CreateCourseInput): Promise<ICourseDocu
   return Course.create({ ...data, slug });
 };
 
-export const listCourses = async ({ page = 1, limit = 12, category, status, search }: ListCoursesParams) => {
-  const query: Record<string, unknown> = { status: status ?? COURSE_STATUS.PUBLISHED };
+export const listCourses = async ({ page = 1, limit = 12, category, status, search, includeAll }: ListCoursesParams) => {
+  const query: Record<string, unknown> = {};
+  if (status) query.status = status;
+  else if (!includeAll) query.status = COURSE_STATUS.PUBLISHED;
   if (category) query.category = category;
   if (search) query.$text = { $search: search };
 
@@ -34,6 +38,19 @@ export const getCourseBySlug = async (slug: string): Promise<ICourseDocument> =>
   const course = await Course.findOne({ slug }).populate('instructor', 'name avatar bio').populate('lessons');
   if (!course) throw makeError('Course not found', 404);
   return course;
+};
+
+export const getCourseByIdWithModules = async (id: string) => {
+  const course = await Course.findById(id);
+  if (!course) throw makeError('Course not found', 404);
+  const modules = await Module.find({ courseId: id });
+  modules.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const withLessons = await Promise.all(modules.map(async (m) => {
+    const lessons = await Lesson.find({ moduleId: String(m._id) });
+    lessons.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    return { ...m, lessons };
+  }));
+  return { ...course, modules: withLessons };
 };
 
 export const updateCourse = async (id: string, data: Partial<ICourseDocument>): Promise<ICourseDocument | null> => {

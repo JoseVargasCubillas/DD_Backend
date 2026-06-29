@@ -1,7 +1,7 @@
-import mongoose, { Document, Schema } from 'mongoose';
 import { EVENT_STATUS } from '../../atoms/constants/status.constant.js';
+import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
 
-export interface IEventDocument extends Document {
+export interface IEventDocument extends SqlDocumentMethods<IEventDocument> {
   title: string;
   slug: string;
   description: string;
@@ -11,46 +11,38 @@ export interface IEventDocument extends Document {
   modality: 'in-person' | 'online' | 'hybrid';
   location: string;
   onlineUrl: string;
-  startDate: Date;
-  endDate: Date;
+  startDate: Date | string;
+  endDate: Date | string;
   price: number;
-  salePrice?: number;
+  salePrice?: number | null;
   capacity: number;
   registeredCount: number;
   status: string;
-  instructor: mongoose.Types.ObjectId;
-  attendees: mongoose.Types.ObjectId[];
+  instructor: string;
+  attendees: string[];
   stripePriceId: string;
   isFeatured: boolean;
   agenda: { time: string; topic: string; speaker: string }[];
-  createdAt: Date;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 }
 
-const eventSchema = new Schema<IEventDocument>({
-  title:           { type: String, required: true, trim: true },
-  slug:            { type: String, required: true, unique: true },
-  description:     { type: String, required: true },
-  shortDescription:{ type: String, default: '' },
-  thumbnail:       { type: String, default: '' },
-  type:            { type: String, enum: ['seminar', 'workshop', 'webinar', 'conference'], default: 'seminar' },
-  modality:        { type: String, enum: ['in-person', 'online', 'hybrid'], default: 'in-person' },
-  location:        { type: String, default: '' },
-  onlineUrl:       { type: String, default: '' },
-  startDate:       { type: Date, required: true },
-  endDate:         { type: Date, required: true },
-  price:           { type: Number, required: true, min: 0 },
-  salePrice:       { type: Number, default: null },
-  capacity:        { type: Number, default: 0 },
-  registeredCount: { type: Number, default: 0 },
-  status:          { type: String, enum: Object.values(EVENT_STATUS), default: EVENT_STATUS.UPCOMING },
-  instructor:      { type: Schema.Types.ObjectId, ref: 'User' },
-  attendees:       [{ type: Schema.Types.ObjectId, ref: 'User' }],
-  stripePriceId:   { type: String, default: '' },
-  isFeatured:      { type: Boolean, default: false },
-  agenda:          [{ time: String, topic: String, speaker: String }],
-}, { timestamps: true });
-
-eventSchema.index({ slug: 1 });
-eventSchema.index({ startDate: 1, status: 1 });
-
-export const Event = mongoose.model<IEventDocument>('Event', eventSchema);
+export const Event = createSqlModel<IEventDocument>({
+  table: 'events',
+  defaults: () => ({
+    shortDescription: '',
+    thumbnail: '',
+    type: 'seminar',
+    modality: 'in-person',
+    location: '',
+    onlineUrl: '',
+    salePrice: null,
+    capacity: 0,
+    registeredCount: 0,
+    status: EVENT_STATUS.UPCOMING,
+    attendees: [],
+    stripePriceId: '',
+    isFeatured: false,
+    agenda: [],
+  }),
+});

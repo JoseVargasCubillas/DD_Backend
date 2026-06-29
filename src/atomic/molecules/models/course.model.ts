@@ -1,7 +1,7 @@
-import mongoose, { Document, Schema } from 'mongoose';
 import { COURSE_STATUS } from '../../atoms/constants/status.constant.js';
+import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
 
-export interface ICourseDocument extends Document {
+export interface ICourseDocument extends SqlDocumentMethods<ICourseDocument> {
   title: string;
   slug: string;
   description: string;
@@ -9,15 +9,16 @@ export interface ICourseDocument extends Document {
   thumbnail: string;
   previewVideo: string;
   price: number;
-  salePrice?: number;
+  salePrice?: number | null;
   currency: string;
   category: string;
   tags: string[];
   level: 'beginner' | 'intermediate' | 'advanced';
   language: string;
   status: string;
-  instructor: mongoose.Types.ObjectId;
-  lessons: mongoose.Types.ObjectId[];
+  instructor: string;
+  lessons: string[];
+  modules: string[];
   totalDuration: number;
   totalLessons: number;
   enrolledCount: number;
@@ -28,41 +29,33 @@ export interface ICourseDocument extends Document {
   isFeatured: boolean;
   requirements: string[];
   whatYouLearn: string[];
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 }
 
-const courseSchema = new Schema<ICourseDocument>({
-  title:            { type: String, required: true, trim: true },
-  slug:             { type: String, required: true, unique: true },
-  description:      { type: String, required: true },
-  shortDescription: { type: String, default: '' },
-  thumbnail:        { type: String, default: '' },
-  previewVideo:     { type: String, default: '' },
-  price:            { type: Number, required: true, min: 0 },
-  salePrice:        { type: Number, default: null },
-  currency:         { type: String, default: 'MXN' },
-  category:         { type: String, required: true },
-  tags:             [String],
-  level:            { type: String, enum: ['beginner', 'intermediate', 'advanced'], default: 'beginner' },
-  language:         { type: String, default: 'es' },
-  status:           { type: String, enum: Object.values(COURSE_STATUS), default: COURSE_STATUS.DRAFT },
-  instructor:       { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  lessons:          [{ type: Schema.Types.ObjectId, ref: 'Lesson' }],
-  totalDuration:    { type: Number, default: 0 },
-  totalLessons:     { type: Number, default: 0 },
-  enrolledCount:    { type: Number, default: 0 },
-  rating:           { type: Number, default: 0 },
-  ratingsCount:     { type: Number, default: 0 },
-  stripePriceId:    { type: String, default: '' },
-  stripeProductId:  { type: String, default: '' },
-  isFeatured:       { type: Boolean, default: false },
-  requirements:     [String],
-  whatYouLearn:     [String],
-}, { timestamps: true });
-
-courseSchema.index({ slug: 1 });
-courseSchema.index({ status: 1, category: 1 });
-courseSchema.index({ title: 'text', description: 'text' });
-
-export const Course = mongoose.model<ICourseDocument>('Course', courseSchema);
+export const Course = createSqlModel<ICourseDocument>({
+  table: 'courses',
+  defaults: () => ({
+    shortDescription: '',
+    thumbnail: '',
+    previewVideo: '',
+    salePrice: null,
+    currency: 'MXN',
+    tags: [],
+    level: 'beginner',
+    language: 'es',
+    status: COURSE_STATUS.DRAFT,
+    lessons: [],
+    modules: [],
+    totalDuration: 0,
+    totalLessons: 0,
+    enrolledCount: 0,
+    rating: 0,
+    ratingsCount: 0,
+    stripePriceId: '',
+    stripeProductId: '',
+    isFeatured: false,
+    requirements: [],
+    whatYouLearn: [],
+  }),
+});

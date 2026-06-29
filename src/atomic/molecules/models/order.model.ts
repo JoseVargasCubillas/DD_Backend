@@ -1,16 +1,16 @@
-import mongoose, { Document, Schema } from 'mongoose';
 import { ORDER_STATUS } from '../../atoms/constants/status.constant.js';
+import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
 
 interface OrderItem {
-  type: 'course' | 'event' | 'subscription' | 'product';
-  refId: mongoose.Types.ObjectId;
+  type: 'course' | 'event' | 'subscription' | 'product' | string;
+  refId: string;
   title: string;
   price: number;
-  quantity: number;
+  quantity?: number;
 }
 
-export interface IOrderDocument extends Document {
-  user: mongoose.Types.ObjectId;
+export interface IOrderDocument extends SqlDocumentMethods<IOrderDocument> {
+  user: string;
   items: OrderItem[];
   subtotal: number;
   tax: number;
@@ -19,31 +19,22 @@ export interface IOrderDocument extends Document {
   status: string;
   stripePaymentIntentId: string;
   stripeReceiptUrl: string;
-  paidAt?: Date;
+  paidAt?: Date | string | null;
   notes: string;
-  createdAt: Date;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 }
 
-const orderSchema = new Schema<IOrderDocument>({
-  user:  { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  items: [{
-    type:     { type: String, enum: ['course', 'event', 'subscription', 'product'], required: true },
-    refId:    { type: Schema.Types.ObjectId, required: true },
-    title:    String,
-    price:    Number,
-    quantity: { type: Number, default: 1 },
-  }],
-  subtotal:              { type: Number, required: true },
-  tax:                   { type: Number, default: 0 },
-  total:                 { type: Number, required: true },
-  currency:              { type: String, default: 'MXN' },
-  status:                { type: String, enum: Object.values(ORDER_STATUS), default: ORDER_STATUS.PENDING },
-  stripePaymentIntentId: { type: String, default: '' },
-  stripeReceiptUrl:      { type: String, default: '' },
-  paidAt:                { type: Date, default: null },
-  notes:                 { type: String, default: '' },
-}, { timestamps: true });
-
-orderSchema.index({ user: 1, status: 1 });
-
-export const Order = mongoose.model<IOrderDocument>('Order', orderSchema);
+export const Order = createSqlModel<IOrderDocument>({
+  table: 'orders',
+  defaults: () => ({
+    items: [],
+    tax: 0,
+    currency: 'MXN',
+    status: ORDER_STATUS.PENDING,
+    stripePaymentIntentId: '',
+    stripeReceiptUrl: '',
+    paidAt: null,
+    notes: '',
+  }),
+});

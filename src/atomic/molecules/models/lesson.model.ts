@@ -1,9 +1,10 @@
-import mongoose, { Document, Schema } from 'mongoose';
+import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
 
-export interface ILessonDocument extends Document {
+export interface ILessonDocument extends SqlDocumentMethods<ILessonDocument> {
   title: string;
   slug: string;
-  course: mongoose.Types.ObjectId;
+  course: string;
+  moduleId: string;
   order: number;
   description: string;
   videoUrl: string;
@@ -12,24 +13,20 @@ export interface ILessonDocument extends Document {
   resources: { name: string; url: string }[];
   isPreview: boolean;
   isFree: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 }
 
-const lessonSchema = new Schema<ILessonDocument>({
-  title:       { type: String, required: true, trim: true },
-  slug:        { type: String, required: true },
-  course:      { type: Schema.Types.ObjectId, ref: 'Course', required: true },
-  order:       { type: Number, required: true },
-  description: { type: String, default: '' },
-  videoUrl:    { type: String, default: '' },
-  duration:    { type: Number, default: 0 },
-  content:     { type: String, default: '' },
-  resources:   [{ name: String, url: String }],
-  isPreview:   { type: Boolean, default: false },
-  isFree:      { type: Boolean, default: false },
-}, { timestamps: true });
-
-lessonSchema.index({ course: 1, order: 1 });
-
-export const Lesson = mongoose.model<ILessonDocument>('Lesson', lessonSchema);
+export const Lesson = createSqlModel<ILessonDocument>({
+  table: 'lessons',
+  defaults: () => ({
+    moduleId: '',
+    description: '',
+    videoUrl: '',
+    duration: 0,
+    content: '',
+    resources: [],
+    isPreview: false,
+    isFree: false,
+  }),
+});

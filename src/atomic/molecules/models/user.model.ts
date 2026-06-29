@@ -1,8 +1,8 @@
-import mongoose, { Document, Schema } from 'mongoose';
-import { ROLES } from '../../atoms/constants/roles.constant.js';
 import { PLANS } from '../../atoms/constants/plans.constant.js';
+import { ROLES } from '../../atoms/constants/roles.constant.js';
+import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
 
-export interface IUserDocument extends Document {
+export interface IUserDocument extends SqlDocumentMethods<IUserDocument> {
   name: string;
   email: string;
   password: string;
@@ -12,34 +12,38 @@ export interface IUserDocument extends Document {
   bio: string;
   plan: string;
   stripeCustomerId: string;
-  enrolledCourses: mongoose.Types.ObjectId[];
+  enrolledCourses: string[];
+  tagIds: string[];
+  notes: string;
+  contactStatus: 'lead' | 'customer' | 'churned';
+  marketingStatus: 'never_subscribed' | 'subscribed' | 'unsubscribed';
+  signInCount: number;
   isActive: boolean;
   isEmailVerified: boolean;
   emailVerifyToken?: string;
   resetPasswordToken?: string;
-  resetPasswordExpires?: Date;
-  lastLogin?: Date;
-  createdAt: Date;
-  updatedAt: Date;
+  resetPasswordExpires?: Date | string;
+  lastLogin?: Date | string;
+  createdAt: Date | string;
+  updatedAt: Date | string;
 }
 
-const userSchema = new Schema<IUserDocument>({
-  name:               { type: String, required: true, trim: true },
-  email:              { type: String, required: true, unique: true, lowercase: true },
-  password:           { type: String, required: true, select: false },
-  role:               { type: String, enum: Object.values(ROLES), default: ROLES.USER },
-  avatar:             { type: String, default: '' },
-  phone:              { type: String, default: '' },
-  bio:                { type: String, default: '' },
-  plan:               { type: String, enum: Object.values(PLANS), default: PLANS.FREE },
-  stripeCustomerId:   { type: String, default: '' },
-  enrolledCourses:    [{ type: Schema.Types.ObjectId, ref: 'Course' }],
-  isActive:           { type: Boolean, default: true },
-  isEmailVerified:    { type: Boolean, default: false },
-  emailVerifyToken:   String,
-  resetPasswordToken: String,
-  resetPasswordExpires: Date,
-  lastLogin:          Date,
-}, { timestamps: true });
-
-export const User = mongoose.model<IUserDocument>('User', userSchema);
+export const User = createSqlModel<IUserDocument>({
+  table: 'users',
+  defaults: () => ({
+    role: ROLES.USER,
+    avatar: '',
+    phone: '',
+    bio: '',
+    plan: PLANS.FREE,
+    stripeCustomerId: '',
+    enrolledCourses: [],
+    tagIds: [],
+    notes: '',
+    contactStatus: 'lead',
+    marketingStatus: 'never_subscribed',
+    signInCount: 0,
+    isActive: true,
+    isEmailVerified: false,
+  }),
+});

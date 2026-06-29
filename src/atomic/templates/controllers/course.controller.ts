@@ -11,10 +11,26 @@ export const create: RequestHandler = async (req, res) => {
 
 export const list: RequestHandler = async (req, res) => {
   try {
-    const { page, limit, category, status, search } = req.query as Record<string, string>;
-    const result = await courseService.listCourses({ page: +page || 1, limit: +limit || 12, category, status, search });
+    const { page, limit, category, status, search, includeAll } = req.query as Record<string, string>;
+    const result = await courseService.listCourses({
+      page: +page || 1,
+      limit: +limit || 12,
+      category,
+      status,
+      search,
+      includeAll: includeAll === 'true',
+    });
     paginated(res, result.courses, { total: result.total, page: result.page, pages: result.pages });
   } catch (err: any) { serverError(res, err); }
+};
+
+export const getByIdAdmin: RequestHandler = async (req, res) => {
+  try {
+    const course = await courseService.getCourseByIdWithModules(req.params.id);
+    success(res, course);
+  } catch (err: any) {
+    err.statusCode === 404 ? notFound(res, err.message) : serverError(res, err);
+  }
 };
 
 export const getBySlug: RequestHandler = async (req, res) => {
