@@ -1,11 +1,39 @@
 import { RequestHandler } from 'express';
 import * as courseService from '../../organisms/services/course.service.js';
-import { success, created, paginated, notFound, serverError } from '../../atoms/helpers/response.helper.js';
+import * as driveImportService from '../../organisms/services/drive-import.service.js';
+import { success, created, paginated, notFound, serverError, badRequest } from '../../atoms/helpers/response.helper.js';
 
 export const create: RequestHandler = async (req, res) => {
   try {
     const course = await courseService.createCourse({ ...req.body, instructor: String((req as any).user._id) });
     created(res, course);
+  } catch (err: any) { serverError(res, err); }
+};
+
+export const importFromDrive: RequestHandler = async (req, res) => {
+  try {
+    const folderUrl = typeof req.body?.folderUrl === 'string' ? req.body.folderUrl.trim() : '';
+    if (folderUrl) {
+      const result = await driveImportService.importDriveFolder({
+        folderUrl,
+        instructor: String((req as any).user._id),
+        status: req.body?.status,
+      });
+      success(res, result);
+      return;
+    }
+
+    const courses = Array.isArray(req.body?.courses) ? req.body.courses : [];
+    if (!courses.length) {
+      badRequest(res, 'folderUrl o courses es requerido');
+      return;
+    }
+    const result = await driveImportService.importDriveCourses({
+      courses,
+      instructor: String((req as any).user._id),
+      status: req.body?.status,
+    });
+    success(res, result);
   } catch (err: any) { serverError(res, err); }
 };
 

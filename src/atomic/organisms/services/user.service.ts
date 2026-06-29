@@ -15,7 +15,7 @@ const sanitize = (u: IUserDocument): any => {
 };
 
 export const getById = async (id: string): Promise<IUserDocument> => {
-  const user = await User.findById(id).populate('enrolledCourses', 'title slug thumbnail');
+  const user = await User.findById(id).populate('enrolledCourses', 'title slug thumbnail category shortDescription');
   if (!user) throw makeError('User not found', 404);
   return user;
 };

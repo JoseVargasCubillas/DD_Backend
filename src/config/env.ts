@@ -40,6 +40,9 @@ export const env = {
     apiKey: process.env.CLOUDINARY_API_KEY ?? '',
     apiSecret: process.env.CLOUDINARY_API_SECRET ?? '',
   },
+  googleDrive: {
+    apiKey: process.env.GOOGLE_DRIVE_API_KEY ?? '',
+  },
   mail: {
     host: process.env.MAIL_HOST ?? 'smtp.gmail.com',
     port: Number(process.env.MAIL_PORT) || 587,
