@@ -5,6 +5,7 @@ import { Course } from '../../molecules/models/course.model.js';
 import { Subscription } from '../../molecules/models/subscription.model.js';
 import { hashPassword } from '../../atoms/helpers/hash.helper.js';
 import { env } from '../../../config/env.js';
+import { getEffectiveUserCourses, getUserOffers } from './offer.service.js';
 
 const makeError = (message: string, statusCode: number): Error =>
   Object.assign(new Error(message), { statusCode });
@@ -78,7 +79,15 @@ export const getById = async (id: string): Promise<IUserDocument> => {
 
 export const getByIdSanitized = async (id: string) => {
   const user = await getById(id);
-  return sanitize(user);
+  const [effectiveCourses, offers] = await Promise.all([
+    getEffectiveUserCourses(id).catch(() => []),
+    getUserOffers(id).catch(() => []),
+  ]);
+  return {
+    ...sanitize(user),
+    enrolledCourses: effectiveCourses,
+    assignedOffers: offers,
+  };
 };
 
 export const updateProfile = async (id: string, data: Partial<IUserDocument>): Promise<IUserDocument | null> => {

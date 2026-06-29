@@ -63,7 +63,7 @@ export const getByIdAdmin: RequestHandler = async (req, res) => {
 
 export const getBySlug: RequestHandler = async (req, res) => {
   try {
-    const course = await courseService.getCourseBySlug(req.params.slug);
+    const course = await courseService.getCourseBySlug(req.params.slug, (req as any).user?._id);
     success(res, course);
   } catch (err: any) {
     err.statusCode === 404 ? notFound(res, err.message) : serverError(res, err);

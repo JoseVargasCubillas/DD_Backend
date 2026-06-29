@@ -11,6 +11,7 @@ import paymentRoutes from './payment.routes.js';
 import eventRoutes from './event.routes.js';
 import blogRoutes from './blog.routes.js';
 import tagRoutes from './tag.routes.js';
+import offerRoutes from './offer.routes.js';
 
 export const apiRoutes = Router();
 
@@ -23,6 +24,7 @@ apiRoutes.use('/courses/:courseId/modules', moduleListRoutes);
 apiRoutes.use('/modules', moduleItemRouter);
 apiRoutes.use('/packages', packageRoutes);
 apiRoutes.use('/promotions', promotionRoutes);
+apiRoutes.use('/offers', offerRoutes);
 apiRoutes.use('/subscriptions', subscriptionRoutes);
 apiRoutes.use('/payments', paymentRoutes);
 apiRoutes.use('/events', eventRoutes);

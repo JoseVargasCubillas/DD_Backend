@@ -4,6 +4,7 @@ import { User } from '../../molecules/models/user.model.js';
 import { Module } from '../../molecules/models/module.model.js';
 import { Lesson } from '../../molecules/models/lesson.model.js';
 import { COURSE_STATUS } from '../../atoms/constants/status.constant.js';
+import { applyAccessToCourse } from './offer.service.js';
 
 const makeError = (msg: string, code: number): Error => Object.assign(new Error(msg), { statusCode: code });
 const makeSlug = (title: string): string => slugify(title, { lower: true, strict: true });
@@ -34,10 +35,10 @@ export const listCourses = async ({ page = 1, limit = 12, category, status, sear
   return { courses, total, page, pages: Math.ceil(total / limit) };
 };
 
-export const getCourseBySlug = async (slug: string): Promise<ICourseDocument> => {
+export const getCourseBySlug = async (slug: string, userId?: string): Promise<ICourseDocument> => {
   const course = await Course.findOne({ slug }).populate('instructor', 'name avatar bio').populate('lessons');
   if (!course) throw makeError('Course not found', 404);
-  return course;
+  return applyAccessToCourse(course, userId) as unknown as Promise<ICourseDocument>;
 };
 
 export const getCourseByIdWithModules = async (id: string) => {
