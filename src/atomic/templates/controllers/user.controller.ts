@@ -20,16 +20,30 @@ export const updateProfile: RequestHandler = async (req, res) => {
 
 export const listUsers: RequestHandler = async (req, res) => {
   try {
-    const { page, limit, search, tagId, role } = req.query as Record<string, string>;
+    const { page, limit, search, tagId, role, sort, segment } = req.query as Record<string, string>;
     const result = await userService.listUsers({
       page: +page || 1,
       limit: +limit || 20,
       search,
       tagId,
       role,
+      sort,
+      segment,
     });
     paginated(res, result.users, { total: result.total, page: result.page, pages: result.pages });
   } catch (err: any) { serverError(res, err); }
+};
+
+export const importContacts: RequestHandler = async (req, res) => {
+  try {
+    const result = await userService.importContacts({
+      contacts: Array.isArray(req.body?.contacts) ? req.body.contacts : [],
+      productMappings: req.body?.productMappings ?? {},
+    });
+    success(res, result);
+  } catch (err: any) {
+    err.statusCode === 400 ? badRequest(res, err.message) : serverError(res, err);
+  }
 };
 
 export const toggleActive: RequestHandler = async (req, res) => {
@@ -101,4 +115,3 @@ export const sendPasswordReset: RequestHandler = async (req, res) => {
     err.statusCode === 404 ? notFound(res, err.message) : serverError(res, err);
   }
 };
-

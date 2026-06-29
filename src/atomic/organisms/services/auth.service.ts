@@ -1,4 +1,5 @@
 import { User } from '../../molecules/models/user.model.js';
+import { Course } from '../../molecules/models/course.model.js';
 import { hashPassword, comparePassword } from '../../atoms/helpers/hash.helper.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../atoms/helpers/jwt.helper.js';
 import { AuthResult } from '../../../types/index.js';
@@ -7,7 +8,14 @@ import { env } from '../../../config/env.js';
 
 interface RegisterInput { name: string; email: string; password: string }
 interface LoginInput { email: string; password: string }
-interface AdminCreateUserInput { name: string; email: string; role?: 'user' | 'admin' }
+interface AdminCreateUserInput {
+  name: string;
+  email: string;
+  role?: 'user' | 'admin';
+  tagIds?: string[];
+  courseIds?: string[];
+  marketingStatus?: 'never_subscribed' | 'subscribed' | 'unsubscribed';
+}
 
 const makeError = (message: string, statusCode: number): Error =>
   Object.assign(new Error(message), { statusCode });
@@ -62,13 +70,41 @@ const generateTempPassword = (length = 14): string => {
  * Admin: crea una cuenta de cliente y envía credenciales por correo.
  * Devuelve la temporal solo en development para verificación.
  */
-export const adminCreateUser = async ({ name, email, role = 'user' }: AdminCreateUserInput) => {
+export const adminCreateUser = async ({
+  name,
+  email,
+  role = 'user',
+  tagIds = [],
+  courseIds = [],
+  marketingStatus = 'never_subscribed',
+}: AdminCreateUserInput) => {
   const exists = await User.findOne({ email });
   if (exists) throw makeError('Email already in use', 409);
 
   const tempPassword = generateTempPassword();
   const hashed = await hashPassword(tempPassword);
-  const user = await User.create({ name, email, password: hashed, role });
+  const validCourseIds: string[] = [];
+
+  for (const courseId of Array.from(new Set(courseIds))) {
+    const course = await Course.findById(courseId);
+    if (!course) continue;
+    course.enrolledCount = Number(course.enrolledCount ?? 0) + 1;
+    await course.save();
+    validCourseIds.push(courseId);
+  }
+
+  const user = await User.create({
+    name,
+    email,
+    password: hashed,
+    role,
+    tagIds: Array.from(new Set(tagIds)),
+    enrolledCourses: validCourseIds,
+    contactStatus: validCourseIds.length ? 'customer' : 'lead',
+    marketingStatus,
+    isActive: true,
+    isEmailVerified: true,
+  });
 
   // Envío de correo (best effort — no romper la creación si SMTP falla).
   try {
@@ -93,4 +129,3 @@ export const adminCreateUser = async ({ name, email, role = 'user' }: AdminCreat
     tempPassword: env.nodeEnv === 'development' ? tempPassword : undefined,
   };
 };
-

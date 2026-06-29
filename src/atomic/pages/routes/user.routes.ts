@@ -12,6 +12,7 @@ router.put('/profile', userController.updateProfile);
 
 // ── Admin: contactos / suscriptores ──────────────────────────
 router.get('/', requireAdmin, userController.listUsers);
+router.post('/import', requireAdmin, userController.importContacts);
 router.get('/:id', requireAdmin, userController.getUserById);
 router.put('/:id', requireAdmin, userController.adminUpdateUser);
 router.patch('/:id/toggle', requireAdmin, userController.toggleActive);
@@ -21,4 +22,3 @@ router.put('/:id/notes', requireAdmin, userController.updateNotes);
 router.post('/:id/send-password', requireAdmin, userController.sendPasswordReset);
 
 export default router;
-
