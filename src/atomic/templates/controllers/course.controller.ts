@@ -18,6 +18,7 @@ export const importFromDrive: RequestHandler = async (req, res) => {
         folderUrl,
         instructor: String((req as any).user._id),
         status: req.body?.status,
+        resetExisting: req.body?.resetExisting === true,
       });
       success(res, result);
       return;
@@ -32,7 +33,20 @@ export const importFromDrive: RequestHandler = async (req, res) => {
       courses,
       instructor: String((req as any).user._id),
       status: req.body?.status,
+      resetExisting: req.body?.resetExisting === true,
     });
+    success(res, result);
+  } catch (err: any) { serverError(res, err); }
+};
+
+export const previewDriveImport: RequestHandler = async (req, res) => {
+  try {
+    const folderUrl = typeof req.body?.folderUrl === 'string' ? req.body.folderUrl.trim() : '';
+    if (!folderUrl) {
+      badRequest(res, 'folderUrl es requerido');
+      return;
+    }
+    const result = await driveImportService.previewDriveFolder(folderUrl);
     success(res, result);
   } catch (err: any) { serverError(res, err); }
 };

@@ -33,20 +33,38 @@ interface ImportInput {
   instructor: string;
   status?: string;
   includeEmptyModules?: boolean;
+  resetExisting?: boolean;
 }
 
 interface ImportResult {
   createdCourses: number;
   updatedCourses: number;
+  resetCourses: number;
   createdModules: number;
   createdLessons: number;
   skippedLessons: number;
+}
+
+interface DrivePreviewCourse {
+  title: string;
+  modules: number;
+  lessons: number;
+}
+
+interface DrivePreviewResult {
+  rootFolders: number;
+  rootVideos: number;
+  courses: DrivePreviewCourse[];
 }
 
 interface DriveApiFile {
   id: string;
   name: string;
   mimeType: string;
+  shortcutDetails?: {
+    targetId?: string;
+    targetMimeType?: string;
+  };
 }
 
 interface DriveListResponse {
@@ -58,6 +76,7 @@ interface DriveFolderImportInput {
   folderUrl: string;
   instructor: string;
   status?: string;
+  resetExisting?: boolean;
 }
 
 const makeSlug = (title: string): string => slugify(title, { lower: true, strict: true });
@@ -85,9 +104,30 @@ const trimVideoExtension = (name: string): string => name.replace(/\.(mp4|mov|m4
 
 const drivePreviewUrl = (fileId: string): string => `https://drive.google.com/file/d/${fileId}/preview`;
 
-const isFolder = (file: DriveApiFile): boolean => file.mimeType === 'application/vnd.google-apps.folder';
+const isFolder = (file: DriveApiFile): boolean =>
+  file.mimeType === 'application/vnd.google-apps.folder' ||
+  (
+    file.mimeType === 'application/vnd.google-apps.shortcut' &&
+    file.shortcutDetails?.targetMimeType === 'application/vnd.google-apps.folder'
+  );
 
-const isVideo = (file: DriveApiFile): boolean => file.mimeType.startsWith('video/');
+const driveFolderId = (file: DriveApiFile): string =>
+  file.shortcutDetails?.targetMimeType === 'application/vnd.google-apps.folder' && file.shortcutDetails.targetId
+    ? file.shortcutDetails.targetId
+    : file.id;
+
+const uniqueFolders = (files: DriveApiFile[]): DriveApiFile[] => {
+  const seen = new Set<string>();
+  return files.filter((file) => {
+    const id = driveFolderId(file);
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+};
+
+const isVideo = (file: DriveApiFile): boolean =>
+  file.mimeType.startsWith('video/') || /\.(mp4|mov|m4v|webm)$/i.test(file.name);
 
 const listDriveFolder = async (folderId: string): Promise<DriveApiFile[]> => {
   if (!env.googleDrive.apiKey) {
@@ -97,7 +137,7 @@ const listDriveFolder = async (folderId: string): Promise<DriveApiFile[]> => {
   const params = new URLSearchParams({
     key: env.googleDrive.apiKey,
     q: `'${folderId}' in parents and trashed = false`,
-    fields: 'files(id,name,mimeType)',
+    fields: 'files(id,name,mimeType,shortcutDetails(targetId,targetMimeType))',
     pageSize: '1000',
     supportsAllDrives: 'true',
     includeItemsFromAllDrives: 'true',
@@ -122,16 +162,16 @@ const collectVideosDeep = async (folderId: string, depth = 0): Promise<DriveLess
   }));
 
   const nested = await Promise.all(
-    sortByName(items.filter(isFolder)).map(async (folder) => collectVideosDeep(folder.id, depth + 1)),
+    sortByName(uniqueFolders(items.filter(isFolder))).map(async (folder) => collectVideosDeep(driveFolderId(folder), depth + 1)),
   );
 
   return [...directVideos, ...nested.flat()];
 };
 
 const buildCourseFromDriveFolder = async (folder: DriveApiFile): Promise<DriveCourseInput> => {
-  const items = await listDriveFolder(folder.id);
+  const items = await listDriveFolder(driveFolderId(folder));
   const directVideos = sortByName(items.filter(isVideo));
-  const childFolders = sortByName(items.filter(isFolder));
+  const childFolders = sortByName(uniqueFolders(items.filter(isFolder)));
   const modules: DriveModuleInput[] = [];
 
   if (directVideos.length > 0) {
@@ -147,7 +187,7 @@ const buildCourseFromDriveFolder = async (folder: DriveApiFile): Promise<DriveCo
   const childModules = await Promise.all(
     childFolders.map(async (childFolder) => ({
       title: childFolder.name,
-      lessons: await collectVideosDeep(childFolder.id),
+      lessons: await collectVideosDeep(driveFolderId(childFolder)),
     })),
   );
 
@@ -163,7 +203,7 @@ const buildCourseFromDriveFolder = async (folder: DriveApiFile): Promise<DriveCo
 export const buildCoursesFromDriveFolder = async (folderUrl: string): Promise<DriveCourseInput[]> => {
   const rootId = extractDriveFolderId(folderUrl);
   const rootItems = await listDriveFolder(rootId);
-  const courseFolders = sortByName(rootItems.filter(isFolder));
+  const courseFolders = sortByName(uniqueFolders(rootItems.filter(isFolder)));
   const rootVideos = sortByName(rootItems.filter(isVideo));
 
   if (courseFolders.length === 0 && rootVideos.length > 0) {
@@ -183,15 +223,46 @@ export const buildCoursesFromDriveFolder = async (folderUrl: string): Promise<Dr
   return Promise.all(courseFolders.map(buildCourseFromDriveFolder));
 };
 
-export const importDriveFolder = async ({ folderUrl, instructor, status = COURSE_STATUS.DRAFT }: DriveFolderImportInput): Promise<ImportResult> => {
+export const previewDriveFolder = async (folderUrl: string): Promise<DrivePreviewResult> => {
+  const rootId = extractDriveFolderId(folderUrl);
+  const rootItems = await listDriveFolder(rootId);
+  const rootFolders = sortByName(uniqueFolders(rootItems.filter(isFolder)));
+  const rootVideos = sortByName(rootItems.filter(isVideo));
   const courses = await buildCoursesFromDriveFolder(folderUrl);
-  return importDriveCourses({ courses, instructor, status, includeEmptyModules: true });
+
+  return {
+    rootFolders: rootFolders.length,
+    rootVideos: rootVideos.length,
+    courses: courses.map((course) => ({
+      title: course.title,
+      modules: asArray(course.modules).length,
+      lessons: asArray(course.modules).reduce((sum, module) => sum + asArray(module.lessons).length, 0),
+    })),
+  };
 };
 
-export const importDriveCourses = async ({ courses, instructor, status = COURSE_STATUS.DRAFT, includeEmptyModules = false }: ImportInput): Promise<ImportResult> => {
+const resetCourseContent = async (courseId: string): Promise<void> => {
+  const [modules, lessons] = await Promise.all([
+    Module.find({ courseId }),
+    Lesson.find({ course: courseId }),
+  ]);
+
+  await Promise.all([
+    ...modules.map((module) => Module.findByIdAndDelete(module._id)),
+    ...lessons.map((lesson) => Lesson.findByIdAndDelete(lesson._id)),
+  ]);
+};
+
+export const importDriveFolder = async ({ folderUrl, instructor, status = COURSE_STATUS.DRAFT, resetExisting = false }: DriveFolderImportInput): Promise<ImportResult> => {
+  const courses = await buildCoursesFromDriveFolder(folderUrl);
+  return importDriveCourses({ courses, instructor, status, includeEmptyModules: false, resetExisting });
+};
+
+export const importDriveCourses = async ({ courses, instructor, status = COURSE_STATUS.DRAFT, includeEmptyModules = false, resetExisting = false }: ImportInput): Promise<ImportResult> => {
   const result: ImportResult = {
     createdCourses: 0,
     updatedCourses: 0,
+    resetCourses: 0,
     createdModules: 0,
     createdLessons: 0,
     skippedLessons: 0,
@@ -221,6 +292,13 @@ export const importDriveCourses = async ({ courses, instructor, status = COURSE_
       course.description = course.description || description;
       course.shortDescription = course.shortDescription || description;
       course.status = status;
+      if (resetExisting) {
+        await resetCourseContent(String(course._id));
+        course.modules = [];
+        course.lessons = [];
+        course.totalLessons = 0;
+        result.resetCourses += 1;
+      }
       await course.save();
       result.updatedCourses += 1;
     }
