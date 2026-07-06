@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as courseController from '../../templates/controllers/course.controller.js';
+import * as courseCommentController from '../../templates/controllers/course-comment.controller.js';
 import { authenticate, optionalAuthenticate } from '../../molecules/middleware/auth.middleware.js';
 import { requireAdmin } from '../../molecules/middleware/role.middleware.js';
 import { createCourseValidator } from '../../atoms/validators/course.validator.js';
@@ -7,6 +8,9 @@ import { createCourseValidator } from '../../atoms/validators/course.validator.j
 const router = Router();
 router.get('/', courseController.list);
 router.get('/admin/:id', authenticate, requireAdmin, courseController.getByIdAdmin);
+router.get('/:courseId/comments', courseCommentController.list);
+router.post('/:courseId/comments', authenticate, courseCommentController.create);
+router.delete('/:courseId/comments/:commentId', authenticate, courseCommentController.remove);
 router.get('/:slug', optionalAuthenticate, courseController.getBySlug);
 router.use(authenticate);
 router.post('/import/drive/preview', requireAdmin, courseController.previewDriveImport);
