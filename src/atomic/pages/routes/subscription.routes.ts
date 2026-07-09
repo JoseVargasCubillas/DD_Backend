@@ -3,8 +3,7 @@ import * as subscriptionController from '../../templates/controllers/subscriptio
 import { authenticate } from '../../molecules/middleware/auth.middleware.js';
 
 const router = Router();
-router.use(authenticate);
-router.get('/active', subscriptionController.getActive);
 router.post('/', subscriptionController.subscribe);
-router.post('/cancel', subscriptionController.cancel);
+router.get('/active', authenticate, subscriptionController.getActive);
+router.post('/cancel', authenticate, subscriptionController.cancel);
 export default router;

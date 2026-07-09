@@ -13,13 +13,22 @@ export const createIntent: RequestHandler = async (req, res) => {
 
 export const webhook: RequestHandler = async (req, res) => {
   const sig = req.headers['stripe-signature'] as string;
+  let event;
+
   try {
-    const event = stripe.webhooks.constructEvent((req as any).rawBody, sig, env.stripe.webhookSecret);
-    await paymentService.handleWebhook(event);
-    res.json({ received: true });
+    event = stripe.webhooks.constructEvent((req as any).rawBody, sig, env.stripe.webhookSecret);
   } catch (err: any) {
     badRequest(res, `Webhook error: ${err.message}`);
+    return;
   }
+
+  try {
+    await paymentService.handleWebhook(event);
+  } catch (err: any) {
+    console.error(`Stripe webhook handler failed for ${event.type}:`, err.message);
+  }
+
+  res.json({ received: true });
 };
 
 export const getOrders: RequestHandler = async (req, res) => {

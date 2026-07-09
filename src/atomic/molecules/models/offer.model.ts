@@ -18,6 +18,9 @@ export interface IOfferDocument extends SqlDocumentMethods<IOfferDocument> {
   status: OfferStatus;
   price: number;
   currency: string;
+  paymentType?: 'one_time' | 'subscription' | 'free';
+  stripePriceId?: string;
+  plan?: string;
   content: IOfferContentItem[];
   assignedUserIds: string[];
   startsAt?: Date | string | null;
@@ -34,6 +37,9 @@ export const Offer = createSqlModel<IOfferDocument>({
     status: 'draft',
     price: 0,
     currency: 'MXN',
+    paymentType: 'one_time',
+    stripePriceId: '',
+    plan: 'pro',
     content: [],
     assignedUserIds: [],
     startsAt: null,

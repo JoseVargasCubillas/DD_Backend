@@ -72,6 +72,9 @@ export const createOffer = async (input: Partial<IOfferDocument>): Promise<IOffe
     status: input.status === 'published' ? 'published' : 'draft',
     price: Number(input.price ?? 0),
     currency: String(input.currency || 'MXN'),
+    paymentType: input.paymentType || 'one_time',
+    stripePriceId: String(input.stripePriceId || ''),
+    plan: String(input.plan || 'pro'),
     content,
     assignedUserIds: unique(input.assignedUserIds ?? []),
     startsAt: input.startsAt ?? null,
@@ -90,6 +93,9 @@ export const updateOffer = async (id: string, input: Partial<IOfferDocument>): P
   if (input.status) offer.status = ['draft', 'published', 'archived'].includes(input.status) ? input.status : offer.status;
   if (input.price !== undefined) offer.price = Number(input.price ?? 0);
   if (input.currency) offer.currency = String(input.currency);
+  if (input.paymentType !== undefined) offer.paymentType = input.paymentType;
+  if (input.stripePriceId !== undefined) offer.stripePriceId = String(input.stripePriceId || '');
+  if (input.plan !== undefined) offer.plan = String(input.plan || 'pro');
   if (input.content) offer.content = await normalizeContent(input.content);
   if (input.assignedUserIds) offer.assignedUserIds = unique(input.assignedUserIds);
   if (input.startsAt !== undefined) offer.startsAt = input.startsAt;
