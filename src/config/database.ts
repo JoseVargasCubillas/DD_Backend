@@ -17,6 +17,7 @@ const entityTables = [
   'promotions',
   'offers',
   'course_comments',
+  'books',
 ] as const;
 
 const quoteId = (identifier: string): string => `\`${identifier.replace(/`/g, '``')}\``;

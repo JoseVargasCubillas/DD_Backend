@@ -9,7 +9,8 @@
                     "start":  "node dist/server.js",
                     "lint":  "eslint src/",
                     "seed:users":  "tsx src/scripts/seed-users.ts",
-                    "seed:academy":  "tsx src/scripts/seed-academy-offers.ts"
+                    "seed:academy":  "tsx src/scripts/seed-academy-offers.ts",
+                    "seed:books":  "tsx src/scripts/seed-books.ts"
                 },
     "dependencies":  {
                          "bcryptjs":  "^2.4.3",

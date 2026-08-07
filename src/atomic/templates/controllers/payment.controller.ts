@@ -6,7 +6,7 @@ import { success, badRequest, serverError } from '../../atoms/helpers/response.h
 
 export const createIntent: RequestHandler = async (req, res) => {
   try {
-    const result = await paymentService.createPaymentIntent(String((req as any).user._id), req.body.items);
+    const result = await paymentService.createPaymentIntent(String((req as any).user._id), req.body.items, req.body.shipping);
     success(res, result);
   } catch (err: any) { serverError(res, err); }
 };
@@ -33,7 +33,10 @@ export const webhook: RequestHandler = async (req, res) => {
 
 export const getOrders: RequestHandler = async (req, res) => {
   try {
-    const orders = await paymentService.getOrdersByUser(String((req as any).user._id));
+    const user = (req as any).user;
+    const orders = user?.role === 'admin'
+      ? await paymentService.getAllOrders()
+      : await paymentService.getOrdersByUser(String(user._id));
     success(res, orders);
   } catch (err: any) { serverError(res, err); }
 };

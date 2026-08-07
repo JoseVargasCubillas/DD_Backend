@@ -12,6 +12,8 @@ import eventRoutes from './event.routes.js';
 import blogRoutes from './blog.routes.js';
 import tagRoutes from './tag.routes.js';
 import offerRoutes from './offer.routes.js';
+import emailRoutes from './email.routes.js';
+import bookRoutes from './book.routes.js';
 
 export const apiRoutes = Router();
 
@@ -29,3 +31,5 @@ apiRoutes.use('/subscriptions', subscriptionRoutes);
 apiRoutes.use('/payments', paymentRoutes);
 apiRoutes.use('/events', eventRoutes);
 apiRoutes.use('/blog', blogRoutes);
+apiRoutes.use('/email', emailRoutes);
+apiRoutes.use('/books', bookRoutes);

@@ -1,10 +1,13 @@
 import { stripe } from '../../../config/stripe.js';
+import { env } from '../../../config/env.js';
 import { Subscription, ISubscriptionDocument } from '../../molecules/models/subscription.model.js';
 import { User, IUserDocument } from '../../molecules/models/user.model.js';
 import { Offer } from '../../molecules/models/offer.model.js';
 import { SUBSCRIPTION_STATUS } from '../../atoms/constants/status.constant.js';
 
 const makeError = (msg: string, code: number): Error => Object.assign(new Error(msg), { statusCode: code });
+const isStripeConfigured = (): boolean =>
+  env.stripe.secretKey.startsWith('sk_') && !env.stripe.secretKey.includes('placeholder');
 
 type CheckoutItemRef = {
   type?: string;
@@ -44,18 +47,20 @@ const normalizeCustomer = (customer?: CheckoutCustomer): Required<CheckoutCustom
 };
 
 const getCheckoutUser = async (userId?: string, customer?: CheckoutCustomer): Promise<IUserDocument> => {
-  const normalized = normalizeCustomer(customer);
-
   if (userId) {
     const user = await User.findById(userId);
     if (!user) throw makeError('User not found', 404);
-    user.name = normalized.name;
-    user.email = normalized.email;
-    user.phone = normalized.phone;
-    await user.save();
+    if (customer) {
+      const normalized = normalizeCustomer(customer);
+      user.name = normalized.name;
+      user.email = normalized.email;
+      user.phone = normalized.phone;
+      await user.save();
+    }
     return user;
   }
 
+  const normalized = normalizeCustomer(customer);
   const existing = await User.findOne({ email: normalized.email });
   if (existing) {
     existing.name = normalized.name;
@@ -99,9 +104,27 @@ const resolveSubscriptionItem = async (input: CreateSubscriptionInput): Promise<
     const paymentType = (offer as any).paymentType || 'subscription';
     if (paymentType !== 'subscription') throw makeError('Esta oferta no es una suscripcion', 400);
 
-    const stripePriceId = String((offer as any).stripePriceId || '');
-    if (!stripePriceId.startsWith('price_')) {
-      throw makeError(`Configura stripePriceId=price_... en la oferta ${offer.title}`, 400);
+    let stripePriceId = String((offer as any).stripePriceId || '');
+    if (!stripePriceId.startsWith('price_') && !isStripeConfigured()) {
+      stripePriceId = `demo_price_${offer._id}`;
+    }
+
+    if (!stripePriceId.startsWith('price_') && isStripeConfigured()) {
+      const stripeProduct = await stripe.products.create({
+        name: offer.title,
+        description: offer.description || undefined,
+        metadata: { offerId: String(offer._id), slug: offer.slug },
+      });
+      const stripePrice = await stripe.prices.create({
+        product: stripeProduct.id,
+        currency: 'mxn',
+        unit_amount: Math.round(Number(offer.price) * 100),
+        recurring: { interval: 'year' },
+        metadata: { offerId: String(offer._id), slug: offer.slug },
+      });
+      stripePriceId = stripePrice.id;
+      (offer as any).stripePriceId = stripePriceId;
+      await offer.save();
     }
 
     return {
@@ -117,9 +140,34 @@ const resolveSubscriptionItem = async (input: CreateSubscriptionInput): Promise<
 };
 
 export const createSubscription = async (input: CreateSubscriptionInput) => {
-  const customer = normalizeCustomer(input.customer);
-  const user = await getCheckoutUser(input.userId, customer);
+  const user = await getCheckoutUser(input.userId, input.customer);
+  const customer = input.customer
+    ? normalizeCustomer(input.customer)
+    : {
+        name: String(user.name || 'Cliente'),
+        email: String(user.email || '').trim().toLowerCase(),
+        phone: String(user.phone || ''),
+      };
   const item = await resolveSubscriptionItem(input);
+
+  if (!isStripeConfigured()) {
+    const currentPeriodStart = new Date();
+    const currentPeriodEnd = new Date(currentPeriodStart);
+    currentPeriodEnd.setFullYear(currentPeriodEnd.getFullYear() + 1);
+
+    const sub = await Subscription.create({
+      user: user._id,
+      plan: item.plan,
+      stripeSubscriptionId: `demo_sub_${Date.now()}`,
+      stripePriceId: item.priceId,
+      status: SUBSCRIPTION_STATUS.ACTIVE,
+      currentPeriodStart,
+      currentPeriodEnd,
+    });
+
+    await User.findByIdAndUpdate(user._id, { plan: item.plan, contactStatus: 'customer' });
+    return { subscription: sub, clientSecret: `demo_${sub._id}` };
+  }
 
   let customerId = user.stripeCustomerId;
   if (!customerId) {
