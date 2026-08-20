@@ -6,6 +6,8 @@ import { Subscription } from '../../molecules/models/subscription.model.js';
 import { hashPassword } from '../../atoms/helpers/hash.helper.js';
 import { env } from '../../../config/env.js';
 import { getEffectiveUserCourses, getUserOffers } from './offer.service.js';
+import { sendCredentials } from './email.service.js';
+import { enqueueMigrationWelcome } from './email-queue.service.js';
 
 const makeError = (message: string, statusCode: number): Error =>
   Object.assign(new Error(message), { statusCode });
@@ -26,6 +28,7 @@ export interface ImportContactInput {
 export interface ImportContactsInput {
   contacts: ImportContactInput[];
   productMappings: Record<string, string[]>;
+  sendMigrationEmail?: boolean;
 }
 
 interface ImportResultRow {
@@ -165,7 +168,7 @@ export const listUsers = async ({ page = 1, limit = 20, search = '', tagId, role
   return { users: sliced, total, page, pages: Math.max(1, Math.ceil(total / limit)) };
 };
 
-export const importContacts = async ({ contacts, productMappings }: ImportContactsInput) => {
+export const importContacts = async ({ contacts, productMappings, sendMigrationEmail = false }: ImportContactsInput) => {
   if (!Array.isArray(contacts) || contacts.length === 0) throw makeError('No hay contactos para importar', 400);
   if (contacts.length > 5000) throw makeError('Importa máximo 5000 contactos por archivo', 400);
 
@@ -234,9 +237,19 @@ export const importContacts = async ({ contacts, productMappings }: ImportContac
         lastLogin: contact.lastLogin || undefined,
         isActive: true,
         isEmailVerified: true,
-        notes: contact.sourceId ? `Importado desde Kajabi. ID: ${contact.sourceId}` : 'Importado desde Kajabi.',
+        notes: sendMigrationEmail
+          ? (contact.sourceId ? `Migrado desde plataforma anterior. ID: ${contact.sourceId}` : 'Migrado desde plataforma anterior.')
+          : (contact.sourceId ? `Importado desde Kajabi. ID: ${contact.sourceId}` : 'Importado desde Kajabi.'),
         createdAt: contact.createdAt || undefined,
       } as any);
+
+      if (sendMigrationEmail) {
+        try {
+          await enqueueMigrationWelcome({ name: user.name, email: user.email, tempPassword });
+        } catch (err) {
+          console.warn('[migrateContacts] failed to enqueue email for', email, (err as Error).message);
+        }
+      }
     } else {
       const nextCourses = new Set([...(user.enrolledCourses ?? []), ...mappedCourseIds]);
       const nextTags = new Set([...(user.tagIds ?? []), ...tagIds]);
@@ -311,6 +324,15 @@ export const toggleActive = async (id: string): Promise<IUserDocument> => {
   return user.save();
 };
 
+export const deleteUser = async (id: string, requestingUserId: string): Promise<{ id: string }> => {
+  const user = await User.findById(id);
+  if (!user) throw makeError('User not found', 404);
+  if (user.role === 'admin') throw makeError('No se puede eliminar una cuenta de administrador', 400);
+  if (String(id) === String(requestingUserId)) throw makeError('No puedes eliminarte a ti mismo', 400);
+  await User.findByIdAndDelete(id);
+  return { id };
+};
+
 // ── Tags asignadas al usuario ────────────────────────────────
 export const getUserTags = async (id: string): Promise<ITagDocument[]> => {
   const user = await User.findById(id);
@@ -374,18 +396,7 @@ export const sendPasswordReset = async (userId: string) => {
   await user.save();
 
   try {
-    const html = `
-      <h1>Hola ${user.name},</h1>
-      <p>Se restableció tu contraseña de la <strong>Academia Diego Díaz</strong>.</p>
-      <p><strong>Correo:</strong> ${user.email}<br />
-         <strong>Nueva contraseña:</strong> <code>${tempPassword}</code></p>
-      <p>Inicia sesión en <a href="${env.clientUrl}/iniciar-sesion">${env.clientUrl}/iniciar-sesion</a>
-         y cámbiala desde tu perfil al primer ingreso.</p>
-    `;
-    const nodemailer = (await import('nodemailer')).default;
-    await nodemailer
-      .createTransport({ host: env.mail.host, port: env.mail.port, auth: { user: env.mail.user, pass: env.mail.pass } })
-      .sendMail({ from: env.mail.from, to: user.email, subject: 'Tu nueva contraseña — Academia Diego Díaz', html });
+    await sendCredentials({ name: user.name, email: user.email }, tempPassword, { isNew: false });
   } catch (err) {
     console.warn('[sendPasswordReset] email failed:', (err as Error).message);
   }

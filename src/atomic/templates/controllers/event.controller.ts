@@ -1,6 +1,6 @@
 import { RequestHandler } from 'express';
 import * as eventService from '../../organisms/services/event.service.js';
-import { success, created, paginated, notFound, serverError } from '../../atoms/helpers/response.helper.js';
+import { success, created, paginated, notFound, badRequest, serverError } from '../../atoms/helpers/response.helper.js';
 
 export const create: RequestHandler = async (req, res) => {
   try {
@@ -39,6 +39,24 @@ export const update: RequestHandler = async (req, res) => {
 export const register: RequestHandler = async (req, res) => {
   try {
     const event = await eventService.registerToEvent(req.params.id, String((req as any).user._id));
+    success(res, event);
+  } catch (err: any) { serverError(res, err); }
+};
+
+export const adminAssign: RequestHandler = async (req, res) => {
+  try {
+    const { userIds } = req.body as { userIds?: string[] };
+    if (!Array.isArray(userIds) || userIds.length === 0) { badRequest(res, 'userIds requerido'); return; }
+    const event = await eventService.assignUsersToEvent(req.params.id, userIds);
+    success(res, event);
+  } catch (err: any) { serverError(res, err); }
+};
+
+export const adminDeregister: RequestHandler = async (req, res) => {
+  try {
+    const { userIds } = req.body as { userIds?: string[] };
+    if (!Array.isArray(userIds) || userIds.length === 0) { badRequest(res, 'userIds requerido'); return; }
+    const event = await eventService.deregisterUsersFromEvent(req.params.id, userIds);
     success(res, event);
   } catch (err: any) { serverError(res, err); }
 };

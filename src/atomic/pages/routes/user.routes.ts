@@ -20,5 +20,6 @@ router.post('/:id/tags', requireAdmin, userController.assignTag);
 router.delete('/:id/tags/:tagId', requireAdmin, userController.removeTag);
 router.put('/:id/notes', requireAdmin, userController.updateNotes);
 router.post('/:id/send-password', requireAdmin, userController.sendPasswordReset);
+router.delete('/:id', requireAdmin, userController.deleteUser);
 
 export default router;

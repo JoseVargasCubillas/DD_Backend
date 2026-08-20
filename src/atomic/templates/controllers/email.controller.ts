@@ -1,6 +1,7 @@
 import { RequestHandler } from 'express';
 import { User, IUserDocument } from '../../molecules/models/user.model.js';
 import * as emailService from '../../organisms/services/email.service.js';
+import { getQueueStatus } from '../../organisms/services/email-queue.service.js';
 import { success, badRequest, serverError } from '../../atoms/helpers/response.helper.js';
 
 /**
@@ -88,6 +89,19 @@ export const getSegmentContacts: RequestHandler = async (req, res) => {
 
     const contacts = targets.map((u) => ({ name: u.name, email: u.email }));
     success(res, contacts);
+  } catch (err: any) {
+    serverError(res, err);
+  }
+};
+
+/**
+ * GET /api/v1/email/queue-status
+ * Retorna el progreso de la cola de correos en segundo plano (ej. migracion de clientes)
+ */
+export const getMigrationQueueStatus: RequestHandler = async (_req, res) => {
+  try {
+    const status = await getQueueStatus('migration_welcome');
+    success(res, status);
   } catch (err: any) {
     serverError(res, err);
   }

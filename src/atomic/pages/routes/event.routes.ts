@@ -10,4 +10,6 @@ router.use(authenticate);
 router.post('/:id/register', eventController.register);
 router.post('/', requireAdmin, eventController.create);
 router.put('/:id', requireAdmin, eventController.update);
+router.post('/:id/assign', requireAdmin, eventController.adminAssign);
+router.post('/:id/deregister', requireAdmin, eventController.adminDeregister);
 export default router;

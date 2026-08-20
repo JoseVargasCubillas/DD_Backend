@@ -39,6 +39,7 @@ export const importContacts: RequestHandler = async (req, res) => {
     const result = await userService.importContacts({
       contacts: Array.isArray(req.body?.contacts) ? req.body.contacts : [],
       productMappings: req.body?.productMappings ?? {},
+      sendMigrationEmail: Boolean(req.body?.sendMigrationEmail),
     });
     success(res, result);
   } catch (err: any) {
@@ -113,5 +114,16 @@ export const sendPasswordReset: RequestHandler = async (req, res) => {
     success(res, result);
   } catch (err: any) {
     err.statusCode === 404 ? notFound(res, err.message) : serverError(res, err);
+  }
+};
+
+export const deleteUser: RequestHandler = async (req, res) => {
+  try {
+    const result = await userService.deleteUser(req.params.id, String((req as any).user._id));
+    success(res, result);
+  } catch (err: any) {
+    if (err.statusCode === 404) { notFound(res, err.message); return; }
+    if (err.statusCode === 400) { badRequest(res, err.message); return; }
+    serverError(res, err);
   }
 };

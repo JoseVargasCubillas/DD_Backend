@@ -46,6 +46,7 @@ export const registerToEvent = async (
 ): Promise<IEventDocument> => {
   const event = await Event.findById(eventId);
   if (!event) throw makeError('Event not found', 404);
+  if ((event.attendees ?? []).includes(userId)) return event;
   if (event.capacity > 0 && event.registeredCount >= event.capacity)
     throw makeError('Event is full', 400);
   await Event.findByIdAndUpdate(eventId, {
@@ -53,4 +54,41 @@ export const registerToEvent = async (
     $inc: { registeredCount: 1 },
   });
   return event;
+};
+
+export const assignUsersToEvent = async (
+  eventId: string,
+  userIds: string[],
+): Promise<IEventDocument> => {
+  const event = await Event.findById(eventId);
+  if (!event) throw makeError('Event not found', 404);
+
+  const current = new Set((event.attendees ?? []).map(String));
+  const newUserIds = userIds.map(String).filter((id) => !current.has(id));
+  if (newUserIds.length === 0) return event;
+  if (event.capacity > 0 && event.registeredCount + newUserIds.length > event.capacity)
+    throw makeError('Event is full', 400);
+
+  const attendees = [...event.attendees, ...newUserIds];
+  const updated = await Event.findByIdAndUpdate(eventId, {
+    attendees,
+    registeredCount: attendees.length,
+  });
+  return updated as IEventDocument;
+};
+
+export const deregisterUsersFromEvent = async (
+  eventId: string,
+  userIds: string[],
+): Promise<IEventDocument> => {
+  const event = await Event.findById(eventId);
+  if (!event) throw makeError('Event not found', 404);
+
+  const toRemove = new Set(userIds.map(String));
+  const attendees = (event.attendees ?? []).filter((id) => !toRemove.has(String(id)));
+  const updated = await Event.findByIdAndUpdate(eventId, {
+    attendees,
+    registeredCount: attendees.length,
+  });
+  return updated as IEventDocument;
 };

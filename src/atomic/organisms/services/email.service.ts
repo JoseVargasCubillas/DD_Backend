@@ -171,6 +171,57 @@ export const sendWelcome = (user: IUserDocument): Promise<unknown> =>
     preheader: 'Tu cuenta de Academia Diego Diaz esta lista.',
   }));
 
+export const sendCredentials = (
+  user: { name: string; email: string },
+  tempPassword: string,
+  opts: { isNew: boolean },
+): Promise<unknown> =>
+  send(
+    user.email,
+    opts.isNew ? 'Acceso a la Academia Diego Diaz' : 'Tu nueva contrasena - Academia Diego Diaz',
+    emailShell({
+      eyebrow: opts.isNew ? 'Bienvenida' : 'Seguridad',
+      title: opts.isNew ? 'Tu cuenta esta lista.' : 'Contrasena actualizada.',
+      lead: opts.isNew
+        ? `Hola ${user.name}, tu acceso a la Academia Diego Diaz ya esta activo.`
+        : `Hola ${user.name}, restablecimos tu contrasena como lo solicitaste.`,
+      content: `
+        <p style="margin:0 0 20px;color:#5f574f;font-size:14px;line-height:1.7;">Usa estas credenciales para iniciar sesion. Te recomendamos cambiarla desde tu perfil al primer ingreso.</p>
+        ${detailRows([
+          ['Correo', user.email],
+          [opts.isNew ? 'Contrasena temporal' : 'Nueva contrasena', tempPassword],
+        ])}
+      `,
+      ctaLabel: 'Iniciar sesion',
+      ctaUrl: `${env.clientUrl}/iniciar-sesion`,
+      preheader: opts.isNew ? 'Tu cuenta de Academia Diego Diaz esta lista.' : 'Tu contrasena fue actualizada.',
+    }),
+  );
+
+export const sendMigrationWelcome = (
+  user: { name: string; email: string },
+  tempPassword: string,
+): Promise<unknown> =>
+  send(
+    user.email,
+    'Cambiamos de plataforma - Academia Diego Diaz',
+    emailShell({
+      eyebrow: 'Aviso importante',
+      title: 'Cambiamos de plataforma.',
+      lead: `Hola ${user.name}, queremos recordarte que sigues suscrito a la Academia Diego Diaz. Acabamos de migrar a una nueva plataforma para mejorar tu experiencia.`,
+      content: `
+        <p style="margin:0 0 20px;color:#5f574f;font-size:14px;line-height:1.7;">Da clic en el boton de abajo para entrar a la nueva Academia e ingresa con la contrasena que te dejamos aqui. ¡Bienvenido de nuevo!</p>
+        ${detailRows([
+          ['Correo', user.email],
+          ['Contrasena de acceso', tempPassword],
+        ])}
+      `,
+      ctaLabel: 'Ir a la Academia',
+      ctaUrl: `${env.clientUrl}/iniciar-sesion`,
+      preheader: 'Migramos de plataforma. Ingresa con tu nueva contrasena y continua tu formacion.',
+    }),
+  );
+
 export const sendPasswordReset = (user: IUserDocument, resetUrl: string): Promise<unknown> =>
   send(user.email, 'Restablecer contrasena', emailShell({
     eyebrow: 'Seguridad',

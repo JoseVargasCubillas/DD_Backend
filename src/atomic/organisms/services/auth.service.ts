@@ -3,7 +3,7 @@ import { Course } from '../../molecules/models/course.model.js';
 import { hashPassword, comparePassword } from '../../atoms/helpers/hash.helper.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../atoms/helpers/jwt.helper.js';
 import { AuthResult } from '../../../types/index.js';
-import { sendWelcome } from './email.service.js';
+import { sendCredentials } from './email.service.js';
 import { env } from '../../../config/env.js';
 
 interface RegisterInput { name: string; email: string; password: string }
@@ -108,17 +108,7 @@ export const adminCreateUser = async ({
 
   // Envío de correo (best effort — no romper la creación si SMTP falla).
   try {
-    const html = `
-      <h1>Hola ${user.name},</h1>
-      <p>Tu cuenta de la <strong>Academia Diego Díaz</strong> está lista.</p>
-      <p><strong>Correo:</strong> ${user.email}<br />
-         <strong>Contraseña temporal:</strong> <code>${tempPassword}</code></p>
-      <p>Inicia sesión en <a href="${env.clientUrl}/iniciar-sesion">${env.clientUrl}/iniciar-sesion</a>
-         y cámbiala desde tu perfil al primer ingreso.</p>
-    `;
-    await (await import('nodemailer')).default
-      .createTransport({ host: env.mail.host, port: env.mail.port, auth: { user: env.mail.user, pass: env.mail.pass } })
-      .sendMail({ from: env.mail.from, to: user.email, subject: 'Acceso a la Academia Diego Díaz', html });
+    await sendCredentials({ name: user.name, email: user.email }, tempPassword, { isNew: true });
   } catch (err) {
     console.warn('[adminCreateUser] email send failed:', (err as Error).message);
   }

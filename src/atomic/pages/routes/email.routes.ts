@@ -9,5 +9,6 @@ router.use(authenticate, requireAdmin);
 router.get('/segments', emailController.getSegments);
 router.get('/contacts', emailController.getSegmentContacts);
 router.post('/broadcast', emailController.sendBroadcast);
+router.get('/queue-status', emailController.getMigrationQueueStatus);
 
 export default router;
