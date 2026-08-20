@@ -70,6 +70,9 @@ const getCheckoutUser = async (userId?: string, customer?: CheckoutCustomer): Pr
     return existing;
   }
 
+  // Password vacia: no es utilizable para iniciar sesion hasta que el pago se
+  // confirme (ver notifyConfirmedSubscription en payment.service.ts), que es
+  // cuando se genera la contrasena temporal real y se envia por correo.
   return User.create({
     name: normalized.name,
     email: normalized.email,

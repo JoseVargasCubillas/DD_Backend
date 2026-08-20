@@ -13,6 +13,7 @@ export interface ISubscriptionDocument extends SqlDocumentMethods<ISubscriptionD
   cancelAtPeriodEnd: boolean;
   canceledAt?: Date | string | null;
   purchaseNotifiedAt?: Date | string | null;
+  lastNotifiedInvoiceId?: string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
 }
@@ -25,5 +26,6 @@ export const Subscription = createSqlModel<ISubscriptionDocument>({
     cancelAtPeriodEnd: false,
     canceledAt: null,
     purchaseNotifiedAt: null,
+    lastNotifiedInvoiceId: null,
   }),
 });

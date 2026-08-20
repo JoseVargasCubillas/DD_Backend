@@ -5,7 +5,8 @@ import { Subscription } from '../../molecules/models/subscription.model.js';
 import { User } from '../../molecules/models/user.model.js';
 import { Book } from '../../molecules/models/book.model.js';
 import { ORDER_STATUS } from '../../atoms/constants/status.constant.js';
-import { sendAdminSubscriptionNotice, sendCustomerSubscriptionNotice } from './email.service.js';
+import { sendAdminSubscriptionNotice, sendCustomerSubscriptionNotice, sendCredentials } from './email.service.js';
+import { hashPassword, generateTempPassword } from '../../atoms/helpers/hash.helper.js';
 import Stripe from 'stripe';
 
 interface OrderItemInput { type: string; refId: string; title: string; price: number; quantity?: number }
@@ -98,30 +99,76 @@ export const confirmPayment = async (paymentIntentId: string): Promise<IOrderDoc
   return order.save();
 };
 
-const notifyConfirmedSubscription = async (stripeSubscriptionId?: string | null): Promise<void> => {
+// Datos de la tarjeta y del recibo de Stripe para el correo administrativo.
+// Best effort: si Stripe no configuró alguno de estos campos, el correo se manda igual sin ellos.
+const getPaymentSummary = async (
+  stripeSubscriptionId: string,
+): Promise<{ cardLabel: string; receiptUrl: string; nextChargeAt: Date | null; amountPaid: number }> => {
+  try {
+    const stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId, {
+      expand: ['default_payment_method', 'latest_invoice'],
+    });
+    const paymentMethod = stripeSub.default_payment_method as Stripe.PaymentMethod | null;
+    const card = paymentMethod?.card;
+    const cardLabel = card ? `${card.brand.charAt(0).toUpperCase()}${card.brand.slice(1)} · terminación ${card.last4}` : '';
+    const invoice = stripeSub.latest_invoice as Stripe.Invoice | null;
+    return {
+      cardLabel,
+      receiptUrl: invoice?.hosted_invoice_url || '',
+      nextChargeAt: stripeSub.current_period_end ? new Date(stripeSub.current_period_end * 1000) : null,
+      amountPaid: invoice?.amount_paid ? invoice.amount_paid / 100 : 0,
+    };
+  } catch (err) {
+    console.warn('[getPaymentSummary] failed:', (err as Error).message);
+    return { cardLabel: '', receiptUrl: '', nextChargeAt: null, amountPaid: 0 };
+  }
+};
+
+// Corre en cada factura pagada (alta inicial y cada renovacion). `invoice.id`
+// funciona como guardia contra reintentos del webhook de Stripe: si ya
+// notificamos esa factura exacta, no se repite el correo.
+const notifyConfirmedSubscription = async (invoice: Stripe.Invoice): Promise<void> => {
+  const stripeSubscriptionId = getSubscriptionIdFromInvoice(invoice);
   if (!stripeSubscriptionId) return;
 
   const sub = await Subscription.findOne({ stripeSubscriptionId });
-  if (!sub || sub.purchaseNotifiedAt) return;
+  if (!sub || sub.lastNotifiedInvoiceId === invoice.id) return;
 
   const user = await User.findById(String(sub.user));
   if (!user?.email) return;
 
+  const isFirstPayment = !sub.purchaseNotifiedAt;
+  const paymentSummary = await getPaymentSummary(sub.stripeSubscriptionId);
+
   const payload = {
+    orderId: String(sub._id || sub.id || ''),
+    customerId: String(user._id || user.id || ''),
     customerName: user.name || 'Cliente',
     customerEmail: user.email,
     customerPhone: user.phone || '',
     plan: sub.plan,
+    isRenewal: !isFirstPayment,
     stripeSubscriptionId: sub.stripeSubscriptionId,
     stripePriceId: sub.stripePriceId,
+    ...paymentSummary,
   };
 
-  await Promise.all([
-    sendAdminSubscriptionNotice(payload),
-    sendCustomerSubscriptionNotice(payload),
-  ]);
+  const emailsToSend = [sendAdminSubscriptionNotice(payload), sendCustomerSubscriptionNotice(payload)];
 
-  sub.purchaseNotifiedAt = new Date().toISOString();
+  // Cuentas de invitado se crean sin password utilizable (ver getCheckoutUser en
+  // subscription.service.ts). Aqui, ya con el pago confirmado, se genera la
+  // contrasena temporal real y se manda por correo junto con las otras dos.
+  // Solo aplica al primer pago: si ya tiene password, ya recibio su correo de acceso antes.
+  if (isFirstPayment && !user.password) {
+    const tempPassword = generateTempPassword();
+    await User.findByIdAndUpdate(String(user._id), { password: await hashPassword(tempPassword) });
+    emailsToSend.push(sendCredentials({ name: user.name, email: user.email }, tempPassword, { isNew: true }));
+  }
+
+  await Promise.all(emailsToSend);
+
+  sub.lastNotifiedInvoiceId = invoice.id;
+  if (isFirstPayment) sub.purchaseNotifiedAt = new Date().toISOString();
   await sub.save();
   await User.findByIdAndUpdate(String(user._id), { contactStatus: 'customer', plan: sub.plan });
 };
@@ -140,7 +187,7 @@ export const handleWebhook = async (event: Stripe.Event): Promise<void> => {
   }
 
   if (event.type === 'invoice.payment_succeeded') {
-    await notifyConfirmedSubscription(getSubscriptionIdFromInvoice(event.data.object as Stripe.Invoice));
+    await notifyConfirmedSubscription(event.data.object as Stripe.Invoice);
   }
 };
 

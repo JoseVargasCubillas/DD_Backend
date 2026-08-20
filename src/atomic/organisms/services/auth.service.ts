@@ -1,6 +1,6 @@
 import { User } from '../../molecules/models/user.model.js';
 import { Course } from '../../molecules/models/course.model.js';
-import { hashPassword, comparePassword } from '../../atoms/helpers/hash.helper.js';
+import { hashPassword, comparePassword, generateTempPassword } from '../../atoms/helpers/hash.helper.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../atoms/helpers/jwt.helper.js';
 import { AuthResult } from '../../../types/index.js';
 import { sendCredentials } from './email.service.js';
@@ -56,14 +56,6 @@ export const refreshTokens = async (token: string): Promise<{ accessToken: strin
     accessToken: signAccessToken({ id: String(user._id), role: user.role }),
     refreshToken: signRefreshToken({ id: String(user._id) }),
   };
-};
-
-// Genera una contraseña temporal segura (16 chars alfanuméricos + símbolos seguros para email).
-const generateTempPassword = (length = 14): string => {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
-  let out = '';
-  for (let i = 0; i < length; i++) out += chars[Math.floor(Math.random() * chars.length)];
-  return out;
 };
 
 /**
