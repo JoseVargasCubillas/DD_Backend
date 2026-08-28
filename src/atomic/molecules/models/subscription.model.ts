@@ -5,6 +5,8 @@ import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
 export interface ISubscriptionDocument extends SqlDocumentMethods<ISubscriptionDocument> {
   user: string;
   plan: string;
+  offerId?: string;
+  packageId?: string;
   status: string;
   stripeSubscriptionId: string;
   stripePriceId: string;
@@ -22,6 +24,8 @@ export const Subscription = createSqlModel<ISubscriptionDocument>({
   table: 'subscriptions',
   defaults: () => ({
     plan: PLANS.FREE,
+    offerId: '',
+    packageId: '',
     status: SUBSCRIPTION_STATUS.ACTIVE,
     cancelAtPeriodEnd: false,
     canceledAt: null,

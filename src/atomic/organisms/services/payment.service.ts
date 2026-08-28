@@ -12,6 +12,8 @@ import Stripe from 'stripe';
 interface OrderItemInput { type: string; refId: string; title: string; price: number; quantity?: number }
 
 const makeError = (msg: string, code: number): Error => Object.assign(new Error(msg), { statusCode: code });
+const ANNUAL_ACCESS_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const isStripeConfigured = (): boolean =>
   env.stripe.secretKey.startsWith('sk_') && !env.stripe.secretKey.includes('placeholder');
 
@@ -168,6 +170,9 @@ const notifyConfirmedSubscription = async (invoice: Stripe.Invoice): Promise<voi
   await Promise.all(emailsToSend);
 
   sub.lastNotifiedInvoiceId = invoice.id;
+  const currentPeriodStart = new Date();
+  sub.currentPeriodStart = currentPeriodStart.toISOString();
+  sub.currentPeriodEnd = new Date(currentPeriodStart.getTime() + ANNUAL_ACCESS_DAYS * DAY_MS).toISOString();
   if (isFirstPayment) sub.purchaseNotifiedAt = new Date().toISOString();
   await sub.save();
   await User.findByIdAndUpdate(String(user._id), { contactStatus: 'customer', plan: sub.plan });

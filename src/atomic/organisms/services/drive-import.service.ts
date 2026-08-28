@@ -25,6 +25,7 @@ interface DriveModuleInput {
 interface DriveCourseInput {
   title: string;
   description?: string;
+  thumbnail?: string;
   modules: DriveModuleInput[];
 }
 
@@ -49,6 +50,7 @@ interface DrivePreviewCourse {
   title: string;
   modules: number;
   lessons: number;
+  thumbnail?: string;
 }
 
 interface DrivePreviewResult {
@@ -103,6 +105,7 @@ const extractDriveFolderId = (value: string): string => {
 const trimVideoExtension = (name: string): string => name.replace(/\.(mp4|mov|m4v|webm)$/i, '').trim();
 
 const drivePreviewUrl = (fileId: string): string => `https://drive.google.com/file/d/${fileId}/preview`;
+const driveImageUrl = (fileId: string): string => `https://drive.google.com/thumbnail?id=${fileId}&sz=w1600`;
 
 const isFolder = (file: DriveApiFile): boolean =>
   file.mimeType === 'application/vnd.google-apps.folder' ||
@@ -128,6 +131,20 @@ const uniqueFolders = (files: DriveApiFile[]): DriveApiFile[] => {
 
 const isVideo = (file: DriveApiFile): boolean =>
   file.mimeType.startsWith('video/') || /\.(mp4|mov|m4v|webm)$/i.test(file.name);
+
+const isImage = (file: DriveApiFile): boolean =>
+  file.mimeType.startsWith('image/') || /\.(jpe?g|png|webp)$/i.test(file.name);
+
+const findCourseThumbnail = (items: DriveApiFile[]): string => {
+  const images = sortByName(items.filter(isImage));
+  if (!images.length) return '';
+
+  const preferred = images.find((file) =>
+    /(portada|cover|thumbnail|miniatura|poster)/i.test(file.name),
+  );
+
+  return driveImageUrl((preferred ?? images[0]).id);
+};
 
 const listDriveFolder = async (folderId: string): Promise<DriveApiFile[]> => {
   if (!env.googleDrive.apiKey) {
@@ -172,6 +189,7 @@ const buildCourseFromDriveFolder = async (folder: DriveApiFile): Promise<DriveCo
   const items = await listDriveFolder(driveFolderId(folder));
   const directVideos = sortByName(items.filter(isVideo));
   const childFolders = sortByName(uniqueFolders(items.filter(isFolder)));
+  const thumbnail = findCourseThumbnail(items);
   const modules: DriveModuleInput[] = [];
 
   if (directVideos.length > 0) {
@@ -196,6 +214,7 @@ const buildCourseFromDriveFolder = async (folder: DriveApiFile): Promise<DriveCo
   return {
     title: folder.name.trim(),
     description: `Contenido importado desde Google Drive para ${folder.name.trim()}.`,
+    thumbnail,
     modules,
   };
 };
@@ -207,9 +226,11 @@ export const buildCoursesFromDriveFolder = async (folderUrl: string): Promise<Dr
   const rootVideos = sortByName(rootItems.filter(isVideo));
 
   if (courseFolders.length === 0 && rootVideos.length > 0) {
+    const thumbnail = findCourseThumbnail(rootItems);
     return [{
       title: 'Curso importado desde Drive',
       description: 'Contenido importado desde Google Drive.',
+      thumbnail,
       modules: [{
         title: 'Contenido',
         lessons: rootVideos.map((file) => ({
@@ -237,6 +258,7 @@ export const previewDriveFolder = async (folderUrl: string): Promise<DrivePrevie
       title: course.title,
       modules: asArray(course.modules).length,
       lessons: asArray(course.modules).reduce((sum, module) => sum + asArray(module.lessons).length, 0),
+      thumbnail: course.thumbnail,
     })),
   };
 };
@@ -274,6 +296,7 @@ export const importDriveCourses = async ({ courses, instructor, status = COURSE_
 
     const slug = makeSlug(title);
     const description = inputCourse.description || `Contenido importado desde Google Drive para ${title}.`;
+    const thumbnail = String(inputCourse.thumbnail || '').trim();
     let course = await Course.findOne({ slug });
 
     if (!course) {
@@ -282,6 +305,7 @@ export const importDriveCourses = async ({ courses, instructor, status = COURSE_
         slug,
         description,
         shortDescription: description,
+        thumbnail,
         price: 0,
         category: 'Academia',
         instructor,
@@ -291,6 +315,7 @@ export const importDriveCourses = async ({ courses, instructor, status = COURSE_
     } else {
       course.description = course.description || description;
       course.shortDescription = course.shortDescription || description;
+      if (thumbnail && (!course.thumbnail || resetExisting)) course.thumbnail = thumbnail;
       course.status = status;
       if (resetExisting) {
         await resetCourseContent(String(course._id));

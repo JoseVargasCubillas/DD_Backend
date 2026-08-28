@@ -3,9 +3,12 @@ import { env } from '../../../config/env.js';
 import { Subscription, ISubscriptionDocument } from '../../molecules/models/subscription.model.js';
 import { User, IUserDocument } from '../../molecules/models/user.model.js';
 import { Offer } from '../../molecules/models/offer.model.js';
+import { Package } from '../../molecules/models/package.model.js';
 import { SUBSCRIPTION_STATUS } from '../../atoms/constants/status.constant.js';
 
 const makeError = (msg: string, code: number): Error => Object.assign(new Error(msg), { statusCode: code });
+const ANNUAL_ACCESS_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const isStripeConfigured = (): boolean =>
   env.stripe.secretKey.startsWith('sk_') && !env.stripe.secretKey.includes('placeholder');
 
@@ -34,6 +37,8 @@ type ResolvedSubscriptionItem = {
   plan: string;
   title: string;
   offerId?: string;
+  packageId?: string;
+  courseIds: string[];
 };
 
 const normalizeCustomer = (customer?: CheckoutCustomer): Required<CheckoutCustomer> => {
@@ -106,6 +111,11 @@ const resolveSubscriptionItem = async (input: CreateSubscriptionInput): Promise<
 
     const paymentType = (offer as any).paymentType || 'subscription';
     if (paymentType !== 'subscription') throw makeError('Esta oferta no es una suscripcion', 400);
+    const packageId = offer.targetType === 'package' ? String(offer.targetId || '') : '';
+    const packageRecord = packageId ? await Package.findById(packageId) : null;
+    const courseIds = packageRecord?.courseIds?.length
+      ? packageRecord.courseIds.map(String)
+      : (offer.content ?? []).map((item) => String(item.courseId)).filter(Boolean);
 
     let stripePriceId = String((offer as any).stripePriceId || '');
     if (!stripePriceId.startsWith('price_') && !isStripeConfigured()) {
@@ -135,11 +145,13 @@ const resolveSubscriptionItem = async (input: CreateSubscriptionInput): Promise<
       plan: String((offer as any).plan || input.plan || 'pro'),
       title: offer.title,
       offerId: offer._id,
+      packageId,
+      courseIds,
     };
   }
 
   if (!input.priceId?.startsWith('price_')) throw makeError('priceId requerido', 400);
-  return { priceId: input.priceId, plan: input.plan || 'pro', title: input.plan || 'Suscripcion' };
+  return { priceId: input.priceId, plan: input.plan || 'pro', title: input.plan || 'Suscripcion', courseIds: [] };
 };
 
 export const createSubscription = async (input: CreateSubscriptionInput) => {
@@ -152,23 +164,26 @@ export const createSubscription = async (input: CreateSubscriptionInput) => {
         phone: String(user.phone || ''),
       };
   const item = await resolveSubscriptionItem(input);
+  const currentPeriodStart = new Date();
+  const currentPeriodEnd = new Date(currentPeriodStart.getTime() + ANNUAL_ACCESS_DAYS * DAY_MS);
 
   if (!isStripeConfigured()) {
-    const currentPeriodStart = new Date();
-    const currentPeriodEnd = new Date(currentPeriodStart);
-    currentPeriodEnd.setFullYear(currentPeriodEnd.getFullYear() + 1);
-
     const sub = await Subscription.create({
       user: user._id,
       plan: item.plan,
       stripeSubscriptionId: `demo_sub_${Date.now()}`,
       stripePriceId: item.priceId,
+      offerId: item.offerId || '',
+      packageId: item.packageId || '',
       status: SUBSCRIPTION_STATUS.ACTIVE,
       currentPeriodStart,
       currentPeriodEnd,
     });
 
-    await User.findByIdAndUpdate(user._id, { plan: item.plan, contactStatus: 'customer' });
+    await User.findByIdAndUpdate(user._id, {
+      plan: item.plan,
+      contactStatus: 'customer',
+    });
     return { subscription: sub, clientSecret: `demo_${sub._id}` };
   }
 
@@ -200,6 +215,7 @@ export const createSubscription = async (input: CreateSubscriptionInput) => {
       userId: user._id,
       plan: item.plan,
       offerId: item.offerId || '',
+      packageId: item.packageId || '',
       customerName: customer.name,
       customerEmail: customer.email,
       customerPhone: customer.phone,
@@ -208,12 +224,16 @@ export const createSubscription = async (input: CreateSubscriptionInput) => {
 
   const sub = await Subscription.create({
     user: user._id, plan: item.plan, stripeSubscriptionId: stripeSub.id, stripePriceId: item.priceId,
+    offerId: item.offerId || '',
+    packageId: item.packageId || '',
     status: SUBSCRIPTION_STATUS.ACTIVE,
-    currentPeriodStart: new Date(stripeSub.current_period_start * 1000),
-    currentPeriodEnd: new Date(stripeSub.current_period_end * 1000),
+    currentPeriodStart,
+    currentPeriodEnd,
   });
 
-  await User.findByIdAndUpdate(user._id, { plan: item.plan });
+  await User.findByIdAndUpdate(user._id, {
+    plan: item.plan,
+  });
 
   const invoice = stripeSub.latest_invoice as any;
   return { subscription: sub, clientSecret: invoice?.payment_intent?.client_secret ?? '' };

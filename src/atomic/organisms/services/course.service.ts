@@ -24,6 +24,7 @@ export const createCourse = async (data: CreateCourseInput): Promise<ICourseDocu
 export const listCourses = async ({ page = 1, limit = 12, category, status, search, includeAll }: ListCoursesParams) => {
   const query: Record<string, unknown> = {};
   if (status) query.status = status;
+  else if (includeAll) query.status = { $ne: COURSE_STATUS.ARCHIVED };
   else if (!includeAll) query.status = COURSE_STATUS.PUBLISHED;
   if (category) query.category = category;
   if (search) query.$text = { $search: search };

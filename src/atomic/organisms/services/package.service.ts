@@ -5,6 +5,19 @@ import { Subscription } from '../../molecules/models/subscription.model.js';
 
 const err = (m: string, c: number): Error => Object.assign(new Error(m), { statusCode: c });
 
+const normalizeExpiresAt = (value: unknown): string | null => {
+  if (!value) return null;
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) throw err('Fecha de vencimiento inválida', 400);
+  return date.toISOString();
+};
+
+const getPackagePeriodEnd = (pkg: IPackageDocument, now: Date): Date => {
+  const durationDays = Number(pkg.durationDays);
+  const accessDays = Number.isFinite(durationDays) && durationDays > 0 ? durationDays : 365;
+  return new Date(now.getTime() + accessDays * 86400000);
+};
+
 export const listPackages = async (): Promise<IPackageDocument[]> => {
   const pkgs = await Package.find({});
   return pkgs.sort((a, b) => new Date(String(b.createdAt)).getTime() - new Date(String(a.createdAt)).getTime());
@@ -21,14 +34,17 @@ export const createPackage = async (input: Partial<IPackageDocument> & { name: s
   const slug = slugify(input.name, { lower: true, strict: true });
   const exists = await Package.findOne({ slug });
   if (exists) throw err('Ya existe un paquete con ese nombre', 409);
-  return Package.create({ ...input, slug });
+  return Package.create({ ...input, expiresAt: normalizeExpiresAt(input.expiresAt), slug });
 };
 
 export const updatePackage = async (id: string, data: Partial<IPackageDocument>): Promise<IPackageDocument> => {
   const pkg = await Package.findById(id);
   if (!pkg) throw err('Paquete no encontrado', 404);
-  const allowed: (keyof IPackageDocument)[] = ['name', 'description', 'price', 'currency', 'courseIds', 'durationDays', 'isActive', 'isFeatured'];
-  for (const k of allowed) if ((data as any)[k] !== undefined) (pkg as any)[k] = (data as any)[k];
+  const allowed: (keyof IPackageDocument)[] = ['name', 'description', 'price', 'currency', 'courseIds', 'durationDays', 'expiresAt', 'isActive', 'isFeatured'];
+  for (const k of allowed) {
+    if ((data as any)[k] === undefined) continue;
+    (pkg as any)[k] = k === 'expiresAt' ? normalizeExpiresAt((data as any)[k]) : (data as any)[k];
+  }
   if (data.name) pkg.slug = slugify(data.name, { lower: true, strict: true });
   return pkg.save();
 };
@@ -53,9 +69,7 @@ export const assignPackageToUser = async (userId: string, packageId: string) => 
   await user.save();
 
   const now = new Date();
-  const periodEnd = pkg.durationDays > 0
-    ? new Date(now.getTime() + pkg.durationDays * 86400000)
-    : new Date(now.getTime() + 100 * 365 * 86400000); // "lifetime"
+  const periodEnd = getPackagePeriodEnd(pkg, now);
 
   const sub = await Subscription.create({
     user: userId,

@@ -93,6 +93,13 @@ const matchesFilter = (doc: AnyRecord, filter: AnyRecord): boolean => {
     }
 
     const actual = getValue(doc, key);
+    if (isObject(expected)) {
+      if ('$ne' in expected && actual === expected.$ne) return false;
+      if ('$in' in expected && Array.isArray(expected.$in) && !expected.$in.includes(actual)) return false;
+      if ('$nin' in expected && Array.isArray(expected.$nin) && expected.$nin.includes(actual)) return false;
+      continue;
+    }
+
     if (Array.isArray(actual)) {
       if (!actual.includes(expected)) return false;
       continue;

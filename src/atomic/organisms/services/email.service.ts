@@ -37,6 +37,28 @@ const send = (to: string, subject: string, html: string): Promise<unknown> =>
     html,
   });
 
+interface MailAttachment {
+  filename: string;
+  path?: string;
+  content?: Buffer;
+  contentType?: string;
+}
+
+const sendWithAttachments = (
+  to: string,
+  subject: string,
+  html: string,
+  attachments: MailAttachment[],
+): Promise<unknown> =>
+  transporter.sendMail({
+    from: env.mail.from || 'Diego Díaz <servicios@diegodiaz.mx>',
+    replyTo: 'servicios@diegodiaz.mx',
+    to,
+    subject,
+    html,
+    attachments,
+  });
+
 const emailShell = ({
   eyebrow,
   badge,
@@ -453,3 +475,73 @@ export const sendCustomerSubscriptionNotice = (input: {
         : `Tu pago de Academia ${formatPlanName(input.plan)} fue confirmado.`,
     }),
   );
+
+export const sendGuideEmail = (
+  input: { email: string; name?: string; guidePath: string; guideFilename: string },
+): Promise<unknown> =>
+  sendWithAttachments(
+    input.email,
+    'Tu guía para blindarte del SAT — Diego Díaz',
+    emailShell({
+      eyebrow: 'Guía · Regalo editorial',
+      badge: 'PDF · 2026',
+      title: `Aquí está tu guía<br/>para blindarte del ${accent('SAT.')}`,
+      lead: input.name
+        ? `Hola ${input.name}, aquí tienes tu ejemplar en PDF. Puedes descargarlo desde el adjunto de este mismo correo.`
+        : 'Aquí tienes tu ejemplar en PDF. Puedes descargarlo desde el adjunto de este mismo correo.',
+      content: `
+        <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
+          Esta guía reúne los criterios que trabajamos con clientes de Díaz Lara Consultoría para anticipar auditorías, ordenar la contabilidad y sostener una defensa fiscal sólida.
+        </p>
+        <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
+          Si quieres profundizar en un caso propio, responde a este correo y te acompañamos desde el despacho.
+        </p>
+        <div style="margin:0 0 8px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">— Cómo abrir el material</div>
+        <p style="margin:0;color:#5f574f;font-size:14px;line-height:1.7;">
+          Descarga el archivo adjunto (${escapeHtml(input.guideFilename)}) y guárdalo en tu ordenador. Si tu cliente de correo bloquea adjuntos grandes, escríbenos y te enviamos un enlace directo.
+        </p>
+      `,
+      ctaLabel: 'Conocer la Academia',
+      ctaUrl: `${env.clientUrl}/academia`,
+      preheader: 'Adjuntamos tu guía en PDF para blindarte del SAT.',
+    }),
+    [
+      {
+        filename: input.guideFilename,
+        path: input.guidePath,
+        contentType: 'application/pdf',
+      },
+    ],
+  );
+
+export const sendMediaKitEmail = (
+  input: { email: string; name?: string; downloadUrl: string },
+): Promise<unknown> =>
+  send(
+    input.email,
+    'Media kit de Diego Díaz',
+    emailShell({
+      eyebrow: 'Kit editorial · Prensa',
+      badge: 'PDF · 2026',
+      title: `Tu descarga del<br/>Media Kit ${accent('Diego Díaz.')}`,
+      lead: input.name
+        ? `Hola ${input.name}, aquí tienes el enlace de descarga del media kit oficial (bio, fotografías en alta, logotipos y líneas editoriales).`
+        : 'Aquí tienes el enlace de descarga del media kit oficial (bio, fotografías en alta, logotipos y líneas editoriales).',
+      content: `
+        <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
+          El archivo pesa cerca de 75 MB, por eso lo enviamos como enlace en lugar de adjunto. Descárgalo desde el botón, guárdalo y úsalo para tu publicación, entrevista o colaboración.
+        </p>
+        <div style="margin:22px 0 8px;">
+          ${linkButton({ label: 'Descargar Media Kit (PDF)', detail: '≈ 75 MB · ESP/ENG', url: input.downloadUrl, dark: true })}
+        </div>
+        <p style="margin:20px 0 0;color:#5f574f;font-size:14px;line-height:1.7;">
+          Si necesitas fotografías adicionales, una entrevista o preparar una nota de prensa, responde a este correo y te contactamos.
+        </p>
+      `,
+      ctaLabel: 'Conocer más de Diego',
+      ctaUrl: `${env.clientUrl}/diego-diaz`,
+      preheader: 'Descarga el media kit oficial de Diego Díaz.',
+    }),
+  );
+
+

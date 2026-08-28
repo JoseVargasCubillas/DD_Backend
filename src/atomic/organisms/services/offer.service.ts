@@ -3,7 +3,10 @@ import { Course, ICourseDocument } from '../../molecules/models/course.model.js'
 import { Lesson } from '../../molecules/models/lesson.model.js';
 import { Module } from '../../molecules/models/module.model.js';
 import { Offer, IOfferContentItem, IOfferDocument } from '../../molecules/models/offer.model.js';
+import { Package } from '../../molecules/models/package.model.js';
+import { Subscription } from '../../molecules/models/subscription.model.js';
 import { User } from '../../molecules/models/user.model.js';
+import { COURSE_STATUS, SUBSCRIPTION_STATUS } from '../../atoms/constants/status.constant.js';
 
 const makeError = (message: string, statusCode: number): Error =>
   Object.assign(new Error(message), { statusCode });
@@ -13,6 +16,13 @@ const makeSlug = (value: string): string =>
 
 const unique = (values: string[]): string[] =>
   Array.from(new Set(values.map(String).filter(Boolean)));
+
+const normalizeDate = (value: unknown): string | null => {
+  if (!value) return null;
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) throw makeError('Fecha inválida', 400);
+  return date.toISOString();
+};
 
 const isOfferActive = (offer: IOfferDocument): boolean => {
   if (offer.status !== 'published') return false;
@@ -46,8 +56,33 @@ const normalizeContent = async (content: IOfferContentItem[] = []): Promise<IOff
   return normalized;
 };
 
+const normalizeOfferTarget = async (
+  input: Partial<IOfferDocument>,
+): Promise<{ targetType: 'course' | 'package' | 'product'; targetId: string; content: IOfferContentItem[] }> => {
+  const targetType = input.targetType === 'package' || input.targetType === 'product' ? input.targetType : 'course';
+  const targetId = String(input.targetId || '').trim();
+
+  if (targetType === 'package') {
+    if (!targetId) throw makeError('Selecciona un paquete para la oferta', 400);
+    const pkg = await Package.findById(targetId);
+    if (!pkg) throw makeError('Paquete no encontrado', 400);
+    const content = await normalizeContent(
+      (pkg.courseIds ?? []).map((courseId) => ({ courseId, access: 'full', moduleIds: [] })),
+    );
+    return { targetType, targetId, content };
+  }
+
+  const content = await normalizeContent(input.content ?? []);
+  const firstCourseId = content[0]?.courseId ?? '';
+  return {
+    targetType,
+    targetId: targetId || firstCourseId,
+    content,
+  };
+};
+
 export const listOffers = async () => {
-  const offers = await Offer.find({});
+  const offers = await Offer.find({ status: { $ne: 'archived' } });
   return offers.sort((a, b) => new Date(String(b.createdAt)).getTime() - new Date(String(a.createdAt)).getTime());
 };
 
@@ -63,7 +98,7 @@ export const createOffer = async (input: Partial<IOfferDocument>): Promise<IOffe
   const slug = makeSlug(title);
   const existing = await Offer.findOne({ slug });
   if (existing) throw makeError('Ya existe una oferta con ese titulo', 409);
-  const content = await normalizeContent(input.content ?? []);
+  const target = await normalizeOfferTarget(input);
   return Offer.create({
     title,
     slug,
@@ -75,10 +110,12 @@ export const createOffer = async (input: Partial<IOfferDocument>): Promise<IOffe
     paymentType: input.paymentType || 'one_time',
     stripePriceId: String(input.stripePriceId || ''),
     plan: String(input.plan || 'pro'),
-    content,
+    targetType: target.targetType,
+    targetId: target.targetId,
+    content: target.content,
     assignedUserIds: unique(input.assignedUserIds ?? []),
-    startsAt: input.startsAt ?? null,
-    expiresAt: input.expiresAt ?? null,
+    startsAt: normalizeDate(input.startsAt),
+    expiresAt: normalizeDate(input.expiresAt),
   } as Partial<IOfferDocument>);
 };
 
@@ -96,10 +133,15 @@ export const updateOffer = async (id: string, input: Partial<IOfferDocument>): P
   if (input.paymentType !== undefined) offer.paymentType = input.paymentType;
   if (input.stripePriceId !== undefined) offer.stripePriceId = String(input.stripePriceId || '');
   if (input.plan !== undefined) offer.plan = String(input.plan || 'pro');
-  if (input.content) offer.content = await normalizeContent(input.content);
+  if (input.targetType !== undefined || input.targetId !== undefined || input.content) {
+    const target = await normalizeOfferTarget({ ...offer, ...input });
+    offer.targetType = target.targetType;
+    offer.targetId = target.targetId;
+    offer.content = target.content;
+  }
   if (input.assignedUserIds) offer.assignedUserIds = unique(input.assignedUserIds);
-  if (input.startsAt !== undefined) offer.startsAt = input.startsAt;
-  if (input.expiresAt !== undefined) offer.expiresAt = input.expiresAt;
+  if (input.startsAt !== undefined) offer.startsAt = normalizeDate(input.startsAt);
+  if (input.expiresAt !== undefined) offer.expiresAt = normalizeDate(input.expiresAt);
   return offer.save();
 };
 
@@ -137,6 +179,26 @@ export const getUserCourseAccess = async (userId: string): Promise<CourseAccess>
   if (!user) throw makeError('User not found', 404);
   const fullCourseIds = new Set((user.enrolledCourses ?? []).map(String));
   const moduleIdsByCourse = new Map<string, Set<string>>();
+
+  const activeSubscription = await Subscription.findOne({ user: userId, status: SUBSCRIPTION_STATUS.ACTIVE })
+    ?? await Subscription.findOne({ user: userId, status: SUBSCRIPTION_STATUS.TRIALING });
+
+  const subscriptionIsCurrent =
+    activeSubscription &&
+    (!activeSubscription.currentPeriodEnd || new Date(String(activeSubscription.currentPeriodEnd)).getTime() >= Date.now());
+
+  if (subscriptionIsCurrent) {
+    const packageId = String((activeSubscription as any).packageId || '');
+    const pkg = packageId ? await Package.findById(packageId) : null;
+    if (pkg?.courseIds?.length) {
+      pkg.courseIds.forEach((courseId) => fullCourseIds.add(String(courseId)));
+    } else {
+      const academyCourses = await Course.find({});
+      academyCourses
+        .filter((course) => course.status !== COURSE_STATUS.ARCHIVED)
+        .forEach((course) => fullCourseIds.add(course._id));
+    }
+  }
 
   const offers = (await Offer.find({})).filter((offer) => (offer.assignedUserIds ?? []).includes(userId) && isOfferActive(offer));
   for (const offer of offers) {

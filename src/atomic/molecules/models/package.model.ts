@@ -8,6 +8,7 @@ export interface IPackageDocument extends SqlDocumentMethods<IPackageDocument> {
   currency: string;
   courseIds: string[];
   durationDays: number;
+  expiresAt?: Date | string | null;
   isActive: boolean;
   isFeatured: boolean;
   createdAt: Date | string;
@@ -22,6 +23,7 @@ export const Package = createSqlModel<IPackageDocument>({
     currency: 'MXN',
     courseIds: [],
     durationDays: 0,
+    expiresAt: null,
     isActive: true,
     isFeatured: false,
   }),

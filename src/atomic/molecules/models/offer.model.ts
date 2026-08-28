@@ -3,6 +3,7 @@ import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
 export type OfferContentAccess = 'full' | 'modules';
 export type OfferType = 'standard' | 'trial';
 export type OfferStatus = 'draft' | 'published' | 'archived';
+export type OfferTargetType = 'course' | 'package' | 'product';
 
 export interface IOfferContentItem {
   courseId: string;
@@ -21,6 +22,8 @@ export interface IOfferDocument extends SqlDocumentMethods<IOfferDocument> {
   paymentType?: 'one_time' | 'subscription' | 'free';
   stripePriceId?: string;
   plan?: string;
+  targetType?: OfferTargetType;
+  targetId?: string;
   content: IOfferContentItem[];
   assignedUserIds: string[];
   startsAt?: Date | string | null;
@@ -40,6 +43,8 @@ export const Offer = createSqlModel<IOfferDocument>({
     paymentType: 'one_time',
     stripePriceId: '',
     plan: 'pro',
+    targetType: 'course',
+    targetId: '',
     content: [],
     assignedUserIds: [],
     startsAt: null,
