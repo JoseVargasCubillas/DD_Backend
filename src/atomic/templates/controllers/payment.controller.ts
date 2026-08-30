@@ -6,9 +6,12 @@ import { success, badRequest, serverError } from '../../atoms/helpers/response.h
 
 export const createIntent: RequestHandler = async (req, res) => {
   try {
-    const result = await paymentService.createPaymentIntent(String((req as any).user._id), req.body.items, req.body.shipping);
+    const userId = (req as any).user?._id ? String((req as any).user._id) : undefined;
+    const result = await paymentService.createPaymentIntent(userId, req.body.items, req.body.shipping, req.body.customer);
     success(res, result);
-  } catch (err: any) { serverError(res, err); }
+  } catch (err: any) {
+    err.statusCode === 400 ? badRequest(res, err.message) : serverError(res, err);
+  }
 };
 
 export const webhook: RequestHandler = async (req, res) => {

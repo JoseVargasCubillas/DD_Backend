@@ -20,8 +20,15 @@ export interface IOrderShippingAddress {
   references?: string;
 }
 
+export interface IOrderContact {
+  name: string;
+  email: string;
+  phone: string;
+}
+
 export interface IOrderDocument extends SqlDocumentMethods<IOrderDocument> {
-  user: string;
+  user?: string;
+  contact: IOrderContact | null;
   items: OrderItem[];
   subtotal: number;
   tax: number;
@@ -42,6 +49,7 @@ export const Order = createSqlModel<IOrderDocument>({
   table: 'orders',
   defaults: () => ({
     items: [],
+    contact: null,
     tax: 0,
     shippingCost: 0,
     shipping: null,

@@ -49,3 +49,10 @@ export const getActive: RequestHandler = async (req, res) => {
     success(res, sub);
   } catch (err: any) { serverError(res, err); }
 };
+
+export const listAll: RequestHandler = async (_req, res) => {
+  try {
+    const subs = await subscriptionService.listAllSubscriptions();
+    success(res, subs);
+  } catch (err: any) { serverError(res, err); }
+};

@@ -249,3 +249,42 @@ export const cancelSubscription = async (userId: string): Promise<ISubscriptionD
 
 export const getActiveSubscription = async (userId: string): Promise<ISubscriptionDocument | null> =>
   Subscription.findOne({ user: userId, status: SUBSCRIPTION_STATUS.ACTIVE });
+
+// Fila enriquecida para el panel de admin: junta cada Subscription con el
+// nombre/correo del usuario y el titulo de la oferta/paquete, para no
+// depender de heuristicas sobre Order (que son compras de un solo pago).
+export const listAllSubscriptions = async () => {
+  const subs = await Subscription.find({}).sort({ createdAt: -1 });
+
+  return Promise.all(
+    subs.map(async (sub) => {
+      const [user, offer, pkg] = await Promise.all([
+        User.findById(String(sub.user)),
+        sub.offerId ? findOfferByIdentity(String(sub.offerId)) : null,
+        sub.packageId ? Package.findById(String(sub.packageId)) : null,
+      ]);
+
+      return {
+        _id: sub._id,
+        id: sub._id,
+        user: String(sub.user),
+        plan: sub.plan,
+        status: sub.status,
+        currentPeriodEnd: sub.currentPeriodEnd,
+        cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+        package: sub.packageId || null,
+        offer: sub.offerId || null,
+        startDate: sub.currentPeriodStart,
+        source: 'stripe' as const,
+        createdAt: sub.createdAt,
+        userName: user?.name || '',
+        userEmail: user?.email || '',
+        packageName: pkg?.name || null,
+        packageTier: offer?.plan || null,
+        offerTitle: offer?.title || null,
+        price: offer?.price ?? pkg?.price ?? null,
+        currency: offer?.currency ?? pkg?.currency ?? 'MXN',
+      };
+    }),
+  );
+};

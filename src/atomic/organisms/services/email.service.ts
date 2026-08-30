@@ -347,6 +347,46 @@ export const sendOrderConfirmation = (user: IUserDocument, order: IOrderDocument
     preheader: 'Tu compra fue confirmada correctamente.',
   }));
 
+// Recibo de compra de un ticket de evento — mismo layout que
+// sendCustomerSubscriptionNotice (Academia), pero sin cuenta de por medio:
+// no hay CTA de "ir a mi cuenta" ni credenciales, solo el comprobante.
+export const sendEventOrderReceipt = (input: {
+  name: string;
+  email: string;
+  order: IOrderDocument;
+}): Promise<unknown> => {
+  const { name, email, order } = input;
+  const orderId = String(order._id || order.id || '');
+  const ticketTitle = order.items.map((i) => i.title).join(', ');
+
+  return send(email, 'Tu pago fue confirmado - Diego Díaz', emailShell({
+    eyebrow: 'Compra confirmada',
+    badge: 'Pagado',
+    title: `Tu pago<br/>fue ${accent('confirmado.')}`,
+    lead: `Hola ${name}, gracias por tu compra.`,
+    content: `
+      ${amountBand('Monto pagado', formatMXN(order.total))}
+      ${confirmationPanel({
+        label: 'Compra confirmada',
+        tag: 'Ticket · pago único',
+        value: accent(ticketTitle),
+        description: 'Tu lugar quedó reservado. Conserva esta información como referencia de tu compra.',
+        rows: [
+          ['Evento', ticketTitle],
+          ['Correo', email],
+          ['Monto', formatMXN(order.total)],
+          ['Referencia', order.stripePaymentIntentId || orderId],
+        ],
+      })}
+    `,
+    footerMeta: {
+      left: `Orden #${orderId.slice(-8).toUpperCase()}`,
+      right: formatDateTimeEs(new Date()),
+    },
+    preheader: 'Tu pago fue confirmado correctamente.',
+  }));
+};
+
 const formatDateEs = (date: Date): string =>
   new Intl.DateTimeFormat('es-MX', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'America/Mexico_City' }).format(date);
 
