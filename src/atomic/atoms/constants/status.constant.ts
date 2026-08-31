@@ -16,6 +16,11 @@ export const SUBSCRIPTION_STATUS = {
   CANCELED: 'canceled',
   PAST_DUE: 'past_due',
   TRIALING: 'trialing',
+  // Suscripcion creada en Stripe pero cuyo primer pago aun no se confirma
+  // (cliente todavia llenando la tarjeta, o abandono el checkout). No cuenta
+  // como venta ni otorga acceso hasta que el webhook invoice.payment_succeeded
+  // la pase a ACTIVE.
+  INCOMPLETE: 'incomplete',
 } as const;
 
 export const EVENT_STATUS = {

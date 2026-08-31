@@ -187,6 +187,36 @@ export const createSubscription = async (input: CreateSubscriptionInput) => {
     return { subscription: sub, clientSecret: `demo_${sub._id}` };
   }
 
+  // Reintento del mismo checkout (recarga de pagina, doble clic, error y
+  // reintento): si ya existe una suscripcion para esta oferta cuyo primer
+  // pago sigue sin confirmarse, se reutiliza en vez de crear otra en Stripe.
+  // Sin esto, cada intento genera una suscripcion + factura nueva y, si el
+  // cliente ya tiene un metodo de pago guardado, Stripe la cobra
+  // automaticamente — es decir, cobro doble real, no solo un registro duplicado.
+  const reusable = await Subscription.findOne({
+    user: user._id,
+    offerId: item.offerId || '',
+    status: SUBSCRIPTION_STATUS.INCOMPLETE,
+  });
+
+  if (reusable) {
+    const existingStripeSub = await stripe.subscriptions.retrieve(reusable.stripeSubscriptionId, {
+      expand: ['latest_invoice.payment_intent'],
+    });
+    const existingInvoice = existingStripeSub.latest_invoice as any;
+    const paymentIntentStatus = existingInvoice?.payment_intent?.status;
+    // Cualquier estado salvo "canceled" (factura expirada por Stripe tras ~23h
+    // sin pagarse) se reutiliza tal cual — incluyendo "succeeded", por si el
+    // webhook que confirma el pago todavia no llega: reintentar la confirmacion
+    // sobre un PaymentIntent ya pagado no genera un cobro nuevo.
+    if (paymentIntentStatus !== 'canceled') {
+      return { subscription: reusable, clientSecret: existingInvoice?.payment_intent?.client_secret ?? '' };
+    }
+
+    reusable.status = SUBSCRIPTION_STATUS.CANCELED;
+    await reusable.save();
+  }
+
   let customerId = user.stripeCustomerId;
   if (!customerId) {
     const stripeCustomer = await stripe.customers.create({
@@ -222,17 +252,17 @@ export const createSubscription = async (input: CreateSubscriptionInput) => {
     },
   });
 
+  // Status INCOMPLETE a proposito: todavia no se confirma el pago. Se pasa a
+  // ACTIVE (y ahi si se actualiza el plan del usuario) en notifyConfirmedSubscription,
+  // cuando llega el webhook invoice.payment_succeeded. Antes de eso no debe
+  // contar como venta ni dar acceso — ver listAllSubscriptions.
   const sub = await Subscription.create({
     user: user._id, plan: item.plan, stripeSubscriptionId: stripeSub.id, stripePriceId: item.priceId,
     offerId: item.offerId || '',
     packageId: item.packageId || '',
-    status: SUBSCRIPTION_STATUS.ACTIVE,
+    status: SUBSCRIPTION_STATUS.INCOMPLETE,
     currentPeriodStart,
     currentPeriodEnd,
-  });
-
-  await User.findByIdAndUpdate(user._id, {
-    plan: item.plan,
   });
 
   const invoice = stripeSub.latest_invoice as any;
@@ -253,8 +283,10 @@ export const getActiveSubscription = async (userId: string): Promise<ISubscripti
 // Fila enriquecida para el panel de admin: junta cada Subscription con el
 // nombre/correo del usuario y el titulo de la oferta/paquete, para no
 // depender de heuristicas sobre Order (que son compras de un solo pago).
+// Excluye INCOMPLETE: son intentos de checkout cuyo primer pago todavia no se
+// confirma (o se abandonaron), no deben contar como venta en el admin.
 export const listAllSubscriptions = async () => {
-  const subs = await Subscription.find({}).sort({ createdAt: -1 });
+  const subs = await Subscription.find({ status: { $ne: SUBSCRIPTION_STATUS.INCOMPLETE } }).sort({ createdAt: -1 });
 
   return Promise.all(
     subs.map(async (sub) => {

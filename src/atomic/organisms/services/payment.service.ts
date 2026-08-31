@@ -5,7 +5,7 @@ import { Subscription } from '../../molecules/models/subscription.model.js';
 import { User } from '../../molecules/models/user.model.js';
 import { Book } from '../../molecules/models/book.model.js';
 import { Event } from '../../molecules/models/event.model.js';
-import { ORDER_STATUS } from '../../atoms/constants/status.constant.js';
+import { ORDER_STATUS, SUBSCRIPTION_STATUS } from '../../atoms/constants/status.constant.js';
 import {
   sendAdminSubscriptionNotice,
   sendCustomerSubscriptionNotice,
@@ -180,7 +180,7 @@ export const confirmPayment = async (paymentIntentId: string): Promise<IOrderDoc
 
 // Datos de la tarjeta y del recibo de Stripe para el correo administrativo.
 // Best effort: si Stripe no configuró alguno de estos campos, el correo se manda igual sin ellos.
-const getPaymentSummary = async (
+export const getPaymentSummary = async (
   stripeSubscriptionId: string,
 ): Promise<{ cardLabel: string; receiptUrl: string; nextChargeAt: Date | null; amountPaid: number }> => {
   try {
@@ -230,6 +230,10 @@ const notifyConfirmedSubscription = async (invoice: Stripe.Invoice): Promise<voi
     stripeSubscriptionId: sub.stripeSubscriptionId,
     stripePriceId: sub.stripePriceId,
     ...paymentSummary,
+    // Recibo propio en vez del hosted_invoice_url de Stripe (paymentSummary.receiptUrl):
+    // ese nunca fue una factura CFDI valida ante el SAT, solo un recibo generico de Stripe.
+    // Esta pagina muestra los mismos datos con la marca de Diego Diaz.
+    receiptUrl: `${env.clientUrl}/recibo/${sub._id}`,
   };
 
   const emailsToSend = [sendAdminSubscriptionNotice(payload), sendCustomerSubscriptionNotice(payload)];
@@ -246,6 +250,7 @@ const notifyConfirmedSubscription = async (invoice: Stripe.Invoice): Promise<voi
 
   await Promise.all(emailsToSend);
 
+  sub.status = SUBSCRIPTION_STATUS.ACTIVE;
   sub.lastNotifiedInvoiceId = invoice.id;
   const currentPeriodStart = new Date();
   sub.currentPeriodStart = currentPeriodStart.toISOString();

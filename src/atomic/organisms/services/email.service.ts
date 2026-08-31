@@ -378,6 +378,9 @@ export const sendEventOrderReceipt = (input: {
           ['Referencia', order.stripePaymentIntentId || orderId],
         ],
       })}
+      <div style="margin-top:22px;">
+        ${linkButton({ label: 'Ver recibo', detail: orderId.slice(0, 10) + '…', url: `${env.clientUrl}/recibo/pedido/${orderId}`, dark: true })}
+      </div>
     `,
     footerMeta: {
       left: `Orden #${orderId.slice(-8).toUpperCase()}`,

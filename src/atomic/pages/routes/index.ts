@@ -15,6 +15,7 @@ import offerRoutes from './offer.routes.js';
 import emailRoutes from './email.routes.js';
 import bookRoutes from './book.routes.js';
 import leadRoutes from './lead.routes.js';
+import receiptRoutes from './receipt.routes.js';
 
 export const apiRoutes = Router();
 
@@ -35,3 +36,4 @@ apiRoutes.use('/blog', blogRoutes);
 apiRoutes.use('/email', emailRoutes);
 apiRoutes.use('/books', bookRoutes);
 apiRoutes.use('/leads', leadRoutes);
+apiRoutes.use('/receipts', receiptRoutes);
