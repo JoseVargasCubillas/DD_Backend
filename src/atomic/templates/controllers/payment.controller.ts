@@ -7,8 +7,23 @@ import { success, badRequest, serverError } from '../../atoms/helpers/response.h
 export const createIntent: RequestHandler = async (req, res) => {
   try {
     const userId = (req as any).user?._id ? String((req as any).user._id) : undefined;
-    const result = await paymentService.createPaymentIntent(userId, req.body.items, req.body.shipping, req.body.customer);
+    const result = await paymentService.createPaymentIntent(
+      userId,
+      req.body.items,
+      req.body.shipping,
+      req.body.customer,
+      req.body.shippingSelection,
+    );
     success(res, result);
+  } catch (err: any) {
+    err.statusCode === 400 ? badRequest(res, err.message) : serverError(res, err);
+  }
+};
+
+export const quoteShipping: RequestHandler = async (req, res) => {
+  try {
+    const rates = await paymentService.quoteShipping(req.body.items, req.body.shipping);
+    success(res, rates);
   } catch (err: any) {
     err.statusCode === 400 ? badRequest(res, err.message) : serverError(res, err);
   }

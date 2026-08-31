@@ -375,11 +375,16 @@ export const sendEventOrderReceipt = (input: {
           ['Evento', ticketTitle],
           ['Correo', email],
           ['Monto', formatMXN(order.total)],
+          ...(order.shippingCarrier ? [['Paquetería', order.shippingCarrier.toUpperCase()] as [string, string]] : []),
+          ...(order.shippingTrackingNumber ? [['Número de guía', order.shippingTrackingNumber] as [string, string]] : []),
           ['Referencia', order.stripePaymentIntentId || orderId],
         ],
       })}
       <div style="margin-top:22px;">
-        ${linkButton({ label: 'Ver recibo', detail: orderId.slice(0, 10) + '…', url: `${env.clientUrl}/recibo/pedido/${orderId}`, dark: true })}
+        ${order.shippingTrackUrl
+          ? linkButton({ label: 'Rastrear envío', detail: order.shippingTrackingNumber, url: order.shippingTrackUrl, dark: true })
+          : ''}
+        ${linkButton({ label: 'Ver recibo', detail: orderId.slice(0, 10) + '…', url: `${env.clientUrl}/recibo/pedido/${orderId}`, dark: !order.shippingTrackUrl })}
       </div>
     `,
     footerMeta: {

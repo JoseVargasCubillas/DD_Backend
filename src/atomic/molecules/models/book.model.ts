@@ -16,6 +16,13 @@ export interface IBookDocument extends SqlDocumentMethods<IBookDocument> {
   coverImage: string;
   stock: number;
   isActive: boolean;
+  // Paquete de un solo ejemplar, para cotizar envio real con Envia — ver
+  // shipping.service.ts. Al comprar varios, el peso se multiplica por la
+  // cantidad y el alto se apila; largo/ancho se mantienen.
+  weightKg: number;
+  lengthCm: number;
+  widthCm: number;
+  heightCm: number;
   createdAt: Date | string;
   updatedAt: Date | string;
 }
@@ -36,5 +43,9 @@ export const Book = createSqlModel<IBookDocument>({
     coverImage: '',
     stock: 0,
     isActive: true,
+    weightKg: 0.5,
+    lengthCm: 25,
+    widthCm: 20,
+    heightCm: 3,
   }),
 });

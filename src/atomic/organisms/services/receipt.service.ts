@@ -65,5 +65,9 @@ export const getOrderReceipt = async (orderId: string) => {
     customerEmail,
     paidAt: order.paidAt ?? null,
     reference: order.stripePaymentIntentId || String(order._id),
+    shippingCarrier: order.shippingCarrier || '',
+    shippingTrackingNumber: order.shippingTrackingNumber || '',
+    shippingLabelUrl: order.shippingLabelUrl || '',
+    shippingTrackUrl: order.shippingTrackUrl || '',
   };
 };
