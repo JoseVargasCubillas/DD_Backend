@@ -16,6 +16,10 @@ export const env = {
   port: Number(process.env.PORT) || 5000,
   nodeEnv: process.env.NODE_ENV ?? 'development',
   clientUrl: process.env.CLIENT_URL ?? 'http://localhost:5173',
+  // URL publica del propio backend — usada para armar links que el backend
+  // resuelve directamente (ej. el redirect de invitacion de WhatsApp), a
+  // diferencia de clientUrl que apunta al frontend.
+  serverUrl: process.env.SERVER_URL ?? 'http://localhost:5000',
   database: {
     host: first('DB_HOST', 'MYSQL_HOST') ?? 'localhost',
     port: Number(first('DB_PORT', 'MYSQL_PORT')) || 3306,
@@ -65,5 +69,9 @@ export const env = {
       state: process.env.ENVIA_ORIGIN_STATE ?? '',
       postalCode: process.env.ENVIA_ORIGIN_POSTAL_CODE ?? '',
     },
+  },
+  whatsapp: {
+    businessGroupUrl: process.env.WHATSAPP_GROUP_BUSINESS_URL ?? '',
+    masterGroupUrl: process.env.WHATSAPP_GROUP_MASTER_URL ?? '',
   },
 } as const;

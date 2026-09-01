@@ -475,6 +475,7 @@ export const sendAcademiaOrderReceipt = (input: {
   accessUntil: Date;
   receiptUrl: string;
   isRenewal?: boolean;
+  whatsappJoinUrl?: string;
 }): Promise<unknown> =>
   send(
     input.customerEmail,
@@ -501,6 +502,13 @@ export const sendAcademiaOrderReceipt = (input: {
           ['Acceso vigente hasta', formatDateEs(input.accessUntil)],
         ],
       })}
+      ${input.whatsappJoinUrl
+        ? `<div style="margin-top:22px;padding:20px 22px;border:1px solid #25D366;background:#f0fbf4;">
+            <p style="margin:0 0 12px;font-size:13px;font-weight:700;color:#17130f;">Tu plan incluye grupo de WhatsApp</p>
+            <p style="margin:0 0 14px;font-size:13px;line-height:1.6;color:#5f574f;">Este enlace es de un solo uso y personal — no lo compartas, deja de funcionar en cuanto entras al grupo.</p>
+            ${linkButton({ label: 'Unirme al grupo de WhatsApp', url: input.whatsappJoinUrl, dark: false })}
+          </div>`
+        : ''}
       <div style="margin-top:22px;">
         ${input.receiptUrl ? linkButton({ label: 'Ver recibo', detail: `Orden #${input.orderId.slice(-8).toUpperCase()}`, url: input.receiptUrl, dark: true }) : ''}
       </div>

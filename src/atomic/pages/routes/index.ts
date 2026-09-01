@@ -16,6 +16,7 @@ import emailRoutes from './email.routes.js';
 import bookRoutes from './book.routes.js';
 import leadRoutes from './lead.routes.js';
 import receiptRoutes from './receipt.routes.js';
+import academiaRoutes from './academia.routes.js';
 
 export const apiRoutes = Router();
 
@@ -37,3 +38,4 @@ apiRoutes.use('/email', emailRoutes);
 apiRoutes.use('/books', bookRoutes);
 apiRoutes.use('/leads', leadRoutes);
 apiRoutes.use('/receipts', receiptRoutes);
+apiRoutes.use('/academia', academiaRoutes);

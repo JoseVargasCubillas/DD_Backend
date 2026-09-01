@@ -22,6 +22,11 @@ export interface ISubscriptionDocument extends SqlDocumentMethods<ISubscriptionD
   lastNotifiedInvoiceId?: string | null;
   renewalReminder7dSentAt?: Date | string | null;
   renewalReminder1dSentAt?: Date | string | null;
+  // Token de un solo uso para el link de invitacion a WhatsApp (planes
+  // business/master) — ver academia.routes.ts. Vacio si el plan no incluye
+  // grupo de WhatsApp.
+  whatsappInviteToken?: string | null;
+  whatsappInviteUsedAt?: Date | string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
 }
@@ -40,5 +45,7 @@ export const Subscription = createSqlModel<ISubscriptionDocument>({
     lastNotifiedInvoiceId: null,
     renewalReminder7dSentAt: null,
     renewalReminder1dSentAt: null,
+    whatsappInviteToken: null,
+    whatsappInviteUsedAt: null,
   }),
 });

@@ -16,6 +16,7 @@ import { hashPassword, generateTempPassword } from '../../atoms/helpers/hash.hel
 import { getShippingRate, getShippingRates, generateShippingLabel, ShippingPackage } from './shipping.service.js';
 import { findOfferByIdentity, isOfferActive } from './offer.service.js';
 import { getCheckoutUser, CheckoutCustomer } from './user.service.js';
+import { issueWhatsappInviteToken, buildWhatsappInviteUrl } from './whatsapp-invite.service.js';
 import Stripe from 'stripe';
 
 interface OrderItemInput {
@@ -386,6 +387,9 @@ const grantAcademiaAccess = async (order: IOrderDocument): Promise<void> => {
     const isFirstPayment = !existing?.purchaseNotifiedAt;
     const currentPeriodStart = new Date();
     const currentPeriodEnd = new Date(currentPeriodStart.getTime() + ANNUAL_ACCESS_DAYS * DAY_MS);
+    // Token nuevo en cada compra/renovacion (planes con grupo de WhatsApp) —
+    // invalida cualquier link viejo que el cliente no haya usado todavia.
+    const whatsappInviteToken = issueWhatsappInviteToken(item.plan || '');
 
     const subData = {
       user: order.user,
@@ -403,6 +407,8 @@ const grantAcademiaAccess = async (order: IOrderDocument): Promise<void> => {
       purchaseNotifiedAt: isFirstPayment ? new Date().toISOString() : existing?.purchaseNotifiedAt,
       renewalReminder7dSentAt: null,
       renewalReminder1dSentAt: null,
+      whatsappInviteToken,
+      whatsappInviteUsedAt: null,
     };
 
     const sub = existing
@@ -423,6 +429,7 @@ const grantAcademiaAccess = async (order: IOrderDocument): Promise<void> => {
       accessUntil: currentPeriodEnd,
       isRenewal: !isFirstPayment,
       receiptUrl: `${env.clientUrl}/recibo/pedido/${order._id}`,
+      whatsappJoinUrl: whatsappInviteToken ? buildWhatsappInviteUrl(whatsappInviteToken) : undefined,
     };
 
     const emailsToSend = [sendAcademiaOrderNotice(payload), sendAcademiaOrderReceipt(payload)];
