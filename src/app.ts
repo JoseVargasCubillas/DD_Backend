@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { apiRoutes } from './atomic/pages/routes/index.js';
+import { globalLimiter } from './atomic/molecules/middleware/rateLimit.middleware.js';
 
 const app = express();
 
@@ -17,7 +18,7 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true }));
 
-app.use('/api/v1', apiRoutes);
+app.use('/api/v1', globalLimiter, apiRoutes);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date() }));
 
