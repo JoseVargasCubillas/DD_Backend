@@ -235,6 +235,18 @@ export const subscribeNewsletter = async (input: {
   });
 };
 
+export const subscribeSatWaitlist = async (input: {
+  email: string;
+  name?: string;
+}): Promise<ILeadDocument> => {
+  return captureLead({
+    email: input.email,
+    name: input.name,
+    source: 'libro-sat-waitlist',
+    meta: { deliveredResource: 'Capítulo 1 · Los 7 secretos que el SAT no quiere que conozcas' },
+  });
+};
+
 export const listLeads = async (source?: LeadSource): Promise<ILeadDocument[]> => {
   const filter = source ? { source } : {};
   const leads = await Lead.find(filter);

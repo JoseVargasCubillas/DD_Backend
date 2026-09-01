@@ -118,6 +118,25 @@ export const subscribeNewsletter: RequestHandler = async (req, res) => {
   }
 };
 
+export const subscribeSatWaitlist: RequestHandler = async (req, res) => {
+  try {
+    const email = String(req.body?.email ?? '').trim();
+    const name = req.body?.name ? String(req.body.name).trim() : undefined;
+
+    if (!email) return badRequest(res, 'El correo es requerido.');
+
+    const lead = await leadService.subscribeSatWaitlist({ email, name });
+    return created(res, {
+      email: lead.email,
+      source: lead.source,
+      emailedAt: lead.emailedAt,
+    });
+  } catch (err: any) {
+    if (err.statusCode === 400) return badRequest(res, err.message);
+    return serverError(res, err);
+  }
+};
+
 export const list: RequestHandler = async (req, res) => {
   try {
     const source = req.query.source ? String(req.query.source) : undefined;

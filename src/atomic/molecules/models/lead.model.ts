@@ -6,6 +6,7 @@ export type LeadSource =
   | 'estrategia-fiscal-dossier'
   | 'centro-recursos'
   | 'newsletter'
+  | 'libro-sat-waitlist'
   | 'contact'
   | 'other';
 
