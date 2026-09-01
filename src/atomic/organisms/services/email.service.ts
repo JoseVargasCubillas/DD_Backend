@@ -592,6 +592,29 @@ export const sendAcademiaExpiredNotice = (input: {
     }),
   );
 
+export const sendNewsletterWelcomeEmail = (
+  input: { email: string; name?: string },
+): Promise<unknown> =>
+  send(
+    input.email,
+    'Bienvenido a Diego Díaz',
+    emailShell({
+      eyebrow: 'Bienvenida · Newsletter',
+      title: `Bienvenido a<br/>${accent('Diego Díaz.')}`,
+      lead: input.name
+        ? `Hola ${input.name}, bienvenido a Diego Díaz. Aquí recibirás actualizaciones y avisos de próximos eventos.`
+        : 'Bienvenido a Diego Díaz. Aquí recibirás actualizaciones y avisos de próximos eventos.',
+      content: `
+        <p style="margin:0;color:#5f574f;font-size:14px;line-height:1.7;">
+          De vez en cuando te escribiremos con contenido editorial, guías fiscales y las próximas fechas de nuestros eventos y seminarios.
+        </p>
+      `,
+      ctaLabel: 'Ver próximos eventos',
+      ctaUrl: `${env.clientUrl}/eventos`,
+      preheader: 'Aquí recibirás actualizaciones y avisos de próximos eventos.',
+    }),
+  );
+
 export const sendGuideEmail = (
   input: { email: string; name?: string; guidePath: string; guideFilename: string },
 ): Promise<unknown> =>

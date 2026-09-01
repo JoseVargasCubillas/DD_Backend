@@ -9,6 +9,7 @@ import {
   sendEstrategiaFiscalDossierEmail,
   sendGuideEmail,
   sendMediaKitEmail,
+  sendNewsletterWelcomeEmail,
 } from './email.service.js';
 
 // Guías se almacenan en <project-root>/assets. Backend arranca desde su raíz.
@@ -251,7 +252,7 @@ export const subscribeNewsletter = async (input: {
   name?: string;
   meta?: Record<string, unknown>;
 }): Promise<ILeadDocument> => {
-  return captureLead({
+  const lead = await captureLead({
     email: input.email,
     name: input.name,
     source: 'newsletter',
@@ -260,6 +261,14 @@ export const subscribeNewsletter = async (input: {
       ...(input.meta ?? {}),
     },
   });
+
+  if (!lead.emailedAt) {
+    await sendNewsletterWelcomeEmail({ email: lead.email, name: lead.name });
+    lead.emailedAt = new Date();
+    await lead.save();
+  }
+
+  return lead;
 };
 
 export const subscribeSatWaitlist = async (input: {
