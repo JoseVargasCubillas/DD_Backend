@@ -2,7 +2,7 @@ import { ORDER_STATUS } from '../../atoms/constants/status.constant.js';
 import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
 
 interface OrderItem {
-  type: 'course' | 'event' | 'subscription' | 'product' | string;
+  type: 'course' | 'event' | 'subscription' | 'academia' | 'product' | string;
   refId: string;
   title: string;
   price: number;
@@ -11,6 +11,10 @@ interface OrderItem {
   lengthCm?: number;
   widthCm?: number;
   heightCm?: number;
+  // Solo para type === 'academia' — ver grantAcademiaAccess en payment.service.ts.
+  offerId?: string;
+  packageId?: string;
+  plan?: string;
 }
 
 export interface IOrderShippingAddress {

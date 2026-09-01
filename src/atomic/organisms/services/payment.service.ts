@@ -2,18 +2,20 @@ import { stripe } from '../../../config/stripe.js';
 import { env } from '../../../config/env.js';
 import { Order, IOrderDocument, IOrderShippingAddress, IOrderContact } from '../../molecules/models/order.model.js';
 import { Subscription } from '../../molecules/models/subscription.model.js';
-import { User } from '../../molecules/models/user.model.js';
+import { User, IUserDocument } from '../../molecules/models/user.model.js';
 import { Book } from '../../molecules/models/book.model.js';
 import { Event } from '../../molecules/models/event.model.js';
 import { ORDER_STATUS, SUBSCRIPTION_STATUS } from '../../atoms/constants/status.constant.js';
 import {
-  sendAdminSubscriptionNotice,
-  sendCustomerSubscriptionNotice,
+  sendAcademiaOrderNotice,
+  sendAcademiaOrderReceipt,
   sendCredentials,
   sendEventOrderReceipt,
 } from './email.service.js';
 import { hashPassword, generateTempPassword } from '../../atoms/helpers/hash.helper.js';
 import { getShippingRate, getShippingRates, generateShippingLabel, ShippingPackage } from './shipping.service.js';
+import { findOfferByIdentity, isOfferActive } from './offer.service.js';
+import { getCheckoutUser, CheckoutCustomer } from './user.service.js';
 import Stripe from 'stripe';
 
 interface OrderItemInput {
@@ -26,9 +28,13 @@ interface OrderItemInput {
   lengthCm?: number;
   widthCm?: number;
   heightCm?: number;
+  offerId?: string;
+  packageId?: string;
+  plan?: string;
 }
 interface CheckoutContactInput { name?: string; email?: string; phone?: string }
 interface ShippingSelectionInput { carrier?: string; service?: string }
+const ACADEMIA_ACCESS_TYPES = new Set(['academia', 'offer']);
 
 const makeError = (msg: string, code: number): Error => Object.assign(new Error(msg), { statusCode: code });
 const ANNUAL_ACCESS_DAYS = 365;
@@ -87,6 +93,26 @@ const normalizeOrderItems = async (items: OrderItemInput[]): Promise<OrderItemIn
         return { type: 'event', refId: String(event._id), title: event.title, price, quantity };
       }
 
+      if (ACADEMIA_ACCESS_TYPES.has(type)) {
+        const refId = String(item.refId || '');
+        const offer = await findOfferByIdentity(refId);
+        if (!offer || offer.status === 'archived' || !isOfferActive(offer)) {
+          throw makeError('Oferta no disponible', 400);
+        }
+        const packageId = offer.targetType === 'package' ? String(offer.targetId || '') : '';
+
+        return {
+          type: 'academia',
+          refId: String(offer._id),
+          title: offer.title,
+          price: Number(offer.price),
+          quantity: 1,
+          offerId: String(offer._id),
+          packageId,
+          plan: String(offer.plan || 'pro'),
+        };
+      }
+
       const price = Number(item.price);
       if (!Number.isFinite(price) || price <= 0) throw makeError('Precio inválido', 400);
 
@@ -114,19 +140,33 @@ const normalizeGuestContact = (contact?: CheckoutContactInput): IOrderContact =>
 // Tickets de evento y libros nunca requieren cuenta: si hay sesion iniciada
 // se usa (para que la compra aparezca en "Mis pedidos"), si no, se guarda
 // solo el contacto (nombre + correo + telefono) en la orden para poder
-// mandar el recibo. Suscripciones y cursos siguen requiriendo sesion.
-const resolveOrderOwner = (
+// mandar el recibo. Academia si requiere una cuenta real (busca-o-crea por
+// correo) porque el acceso a cursos se resuelve contra un userId.
+const resolveOrderOwner = async (
   userId: string | undefined,
   allowsGuestCheckout: boolean,
-  customer?: CheckoutContactInput,
-): { user: string; contact: IOrderContact | null } => {
+  customer: CheckoutContactInput | undefined,
+  requiresAccount: boolean,
+): Promise<{ user: string; contact: IOrderContact | null }> => {
+  if (requiresAccount) {
+    const user: IUserDocument = await getCheckoutUser(userId, customer as CheckoutCustomer);
+    return { user: String(user._id), contact: null };
+  }
   if (userId) return { user: userId, contact: null };
   if (allowsGuestCheckout) return { user: '', contact: normalizeGuestContact(customer) };
   throw makeError('Inicia sesión para continuar', 401);
 };
 
-// Todos los productos fisicos del pedido se envian juntos en una sola caja:
-// el peso se suma y el alto se apila; largo/ancho toman el mayor de los items.
+// Los libros del pedido se envian en el mismo sobre acolchado de 20x15cm que
+// se usa siempre para este tipo de envio (ver paquete guardado "LIBROS" en
+// Envia). Un sobre acolchado ya no cabe fisicamente pasado cierto peso, asi
+// que pedidos grandes cambian a caja: el alto se apila por libro y largo/ancho
+// toman el mayor de los items, igual que antes de introducir el sobre fijo.
+const ENVELOPE_LENGTH_CM = 20;
+const ENVELOPE_WIDTH_CM = 15;
+const ENVELOPE_HEIGHT_CM = 2;
+const ENVELOPE_MAX_WEIGHT_KG = 2;
+
 const buildShippingPackages = (items: OrderItemInput[]): ShippingPackage[] => {
   const products = items.filter((i) => i.type === 'product');
   if (!products.length) return [];
@@ -144,14 +184,20 @@ const buildShippingPackages = (items: OrderItemInput[]): ShippingPackage[] => {
     { weightKg: 0, heightCm: 0, lengthCm: 0, widthCm: 0, declaredValue: 0 },
   );
 
+  const weightKg = Math.round(totals.weightKg * 100) / 100;
+  const content = products.map((p) => p.title).join(', ').slice(0, 100);
+  const declaredValue = Math.round(totals.declaredValue * 100) / 100;
+  const fitsEnvelope = weightKg <= ENVELOPE_MAX_WEIGHT_KG;
+
   return [
     {
-      content: products.map((p) => p.title).join(', ').slice(0, 100),
-      weightKg: Math.round(totals.weightKg * 100) / 100,
-      lengthCm: totals.lengthCm,
-      widthCm: totals.widthCm,
-      heightCm: Math.round(totals.heightCm * 100) / 100,
-      declaredValue: Math.round(totals.declaredValue * 100) / 100,
+      type: fitsEnvelope ? 'envelope' : 'box',
+      content,
+      weightKg,
+      lengthCm: fitsEnvelope ? ENVELOPE_LENGTH_CM : totals.lengthCm,
+      widthCm: fitsEnvelope ? ENVELOPE_WIDTH_CM : totals.widthCm,
+      heightCm: fitsEnvelope ? ENVELOPE_HEIGHT_CM : Math.round(totals.heightCm * 100) / 100,
+      declaredValue,
     },
   ];
 };
@@ -217,8 +263,11 @@ export const createPaymentIntent = async (
   shippingSelection?: ShippingSelectionInput,
 ) => {
   const normalizedItems = await normalizeOrderItems(items);
-  const allowsGuestCheckout = normalizedItems.every((i) => i.type === 'event' || i.type === 'product');
-  const { user, contact } = resolveOrderOwner(userId, allowsGuestCheckout, customer);
+  const allowsGuestCheckout = normalizedItems.every(
+    (i) => i.type === 'event' || i.type === 'product' || i.type === 'academia',
+  );
+  const requiresAccount = normalizedItems.some((i) => i.type === 'academia');
+  const { user, contact } = await resolveOrderOwner(userId, allowsGuestCheckout, customer, requiresAccount);
   const subtotal = normalizedItems.reduce((sum, i) => sum + i.price * (i.quantity ?? 1), 0);
   const requiresShipping = Boolean(shipping) || normalizedItems.some((i) => i.type === 'product');
 
@@ -254,6 +303,7 @@ export const createPaymentIntent = async (
     });
     await sendReceiptIfEventOrder(order);
     await generateOrderShippingLabelIfNeeded(order);
+    await grantAcademiaAccess(order);
     return { clientSecret: `demo_${order._id}`, orderId: order._id, subtotal, tax, shippingCost, total };
   }
 
@@ -288,6 +338,7 @@ export const confirmPayment = async (paymentIntentId: string): Promise<IOrderDoc
   // muta `saved` en el momento, no hace falta releer la orden.
   await generateOrderShippingLabelIfNeeded(saved);
   await sendReceiptIfEventOrder(saved);
+  await grantAcademiaAccess(saved);
   return saved;
 };
 
@@ -316,78 +367,84 @@ export const getPaymentSummary = async (
   }
 };
 
-// Corre en cada factura pagada (alta inicial y cada renovacion). `invoice.id`
-// funciona como guardia contra reintentos del webhook de Stripe: si ya
-// notificamos esa factura exacta, no se repite el correo.
-const notifyConfirmedSubscription = async (invoice: Stripe.Invoice): Promise<void> => {
-  const stripeSubscriptionId = getSubscriptionIdFromInvoice(invoice);
-  if (!stripeSubscriptionId) return;
+// Otorga acceso a Academia y manda las notificaciones de compra. Se llama
+// tanto para pagos reales (confirmPayment, tras el webhook payment_intent.succeeded)
+// como para el modo demo local (createPaymentIntent sin llaves de Stripe) —
+// ambos crean la orden ya COMPLETED, asi que la logica de acceso es la misma.
+// Reusa la misma fila de Subscription en cada renovacion (busca por
+// user+offerId) en vez de crear una nueva por compra, para no acumular
+// historial duplicado y para que los flags de recordatorio se reseteen limpios.
+const grantAcademiaAccess = async (order: IOrderDocument): Promise<void> => {
+  const academiaItems = order.items.filter((item) => item.type === 'academia' && item.offerId);
+  if (!academiaItems.length || !order.user) return;
 
-  const sub = await Subscription.findOne({ stripeSubscriptionId });
-  if (!sub || sub.lastNotifiedInvoiceId === invoice.id) return;
-
-  const user = await User.findById(String(sub.user));
+  const user = await User.findById(String(order.user));
   if (!user?.email) return;
 
-  const isFirstPayment = !sub.purchaseNotifiedAt;
-  const paymentSummary = await getPaymentSummary(sub.stripeSubscriptionId);
+  for (const item of academiaItems) {
+    const existing = await Subscription.findOne({ user: order.user, offerId: item.offerId });
+    const isFirstPayment = !existing?.purchaseNotifiedAt;
+    const currentPeriodStart = new Date();
+    const currentPeriodEnd = new Date(currentPeriodStart.getTime() + ANNUAL_ACCESS_DAYS * DAY_MS);
 
-  const payload = {
-    orderId: String(sub._id || sub.id || ''),
-    customerId: String(user._id || user.id || ''),
-    customerName: user.name || 'Cliente',
-    customerEmail: user.email,
-    customerPhone: user.phone || '',
-    plan: sub.plan,
-    isRenewal: !isFirstPayment,
-    stripeSubscriptionId: sub.stripeSubscriptionId,
-    stripePriceId: sub.stripePriceId,
-    ...paymentSummary,
-    // Recibo propio en vez del hosted_invoice_url de Stripe (paymentSummary.receiptUrl):
-    // ese nunca fue una factura CFDI valida ante el SAT, solo un recibo generico de Stripe.
-    // Esta pagina muestra los mismos datos con la marca de Diego Diaz.
-    receiptUrl: `${env.clientUrl}/recibo/${sub._id}`,
-  };
+    const subData = {
+      user: order.user,
+      plan: item.plan || 'pro',
+      offerId: item.offerId || '',
+      packageId: item.packageId || '',
+      orderId: String(order._id),
+      status: SUBSCRIPTION_STATUS.ACTIVE,
+      stripeSubscriptionId: '',
+      stripePriceId: '',
+      currentPeriodStart: currentPeriodStart.toISOString(),
+      currentPeriodEnd: currentPeriodEnd.toISOString(),
+      cancelAtPeriodEnd: false,
+      canceledAt: null,
+      purchaseNotifiedAt: isFirstPayment ? new Date().toISOString() : existing?.purchaseNotifiedAt,
+      renewalReminder7dSentAt: null,
+      renewalReminder1dSentAt: null,
+    };
 
-  const emailsToSend = [sendAdminSubscriptionNotice(payload), sendCustomerSubscriptionNotice(payload)];
+    const sub = existing
+      ? await Subscription.findByIdAndUpdate(String(existing._id), subData)
+      : await Subscription.create(subData as any);
+    if (!sub) continue;
 
-  // Cuentas de invitado se crean sin password utilizable (ver getCheckoutUser en
-  // subscription.service.ts). Aqui, ya con el pago confirmado, se genera la
-  // contrasena temporal real y se manda por correo junto con las otras dos.
-  // Solo aplica al primer pago: si ya tiene password, ya recibio su correo de acceso antes.
-  if (isFirstPayment && !user.password) {
-    const tempPassword = generateTempPassword();
-    await User.findByIdAndUpdate(String(user._id), { password: await hashPassword(tempPassword) });
-    emailsToSend.push(sendCredentials({ name: user.name, email: user.email }, tempPassword, { isNew: true }));
+    await User.findByIdAndUpdate(String(user._id), { contactStatus: 'customer', plan: item.plan || 'pro' });
+
+    const payload = {
+      orderId: String(order._id),
+      customerId: String(user._id || user.id || ''),
+      customerName: user.name || 'Cliente',
+      customerEmail: user.email,
+      customerPhone: user.phone || '',
+      plan: item.plan || 'pro',
+      amountPaid: item.price,
+      accessUntil: currentPeriodEnd,
+      isRenewal: !isFirstPayment,
+      receiptUrl: `${env.clientUrl}/recibo/pedido/${order._id}`,
+    };
+
+    const emailsToSend = [sendAcademiaOrderNotice(payload), sendAcademiaOrderReceipt(payload)];
+
+    // Cuentas de invitado se crean sin password utilizable (ver getCheckoutUser
+    // en user.service.ts). Aqui, ya con el pago confirmado, se genera la
+    // contrasena temporal real y se manda por correo junto con las otras dos.
+    // Solo aplica al primer pago: si ya tiene password, ya recibio su correo antes.
+    if (isFirstPayment && !user.password) {
+      const tempPassword = generateTempPassword();
+      await User.findByIdAndUpdate(String(user._id), { password: await hashPassword(tempPassword) });
+      emailsToSend.push(sendCredentials({ name: user.name, email: user.email }, tempPassword, { isNew: true }));
+    }
+
+    await Promise.all(emailsToSend);
   }
-
-  await Promise.all(emailsToSend);
-
-  sub.status = SUBSCRIPTION_STATUS.ACTIVE;
-  sub.lastNotifiedInvoiceId = invoice.id;
-  const currentPeriodStart = new Date();
-  sub.currentPeriodStart = currentPeriodStart.toISOString();
-  sub.currentPeriodEnd = new Date(currentPeriodStart.getTime() + ANNUAL_ACCESS_DAYS * DAY_MS).toISOString();
-  if (isFirstPayment) sub.purchaseNotifiedAt = new Date().toISOString();
-  await sub.save();
-  await User.findByIdAndUpdate(String(user._id), { contactStatus: 'customer', plan: sub.plan });
-};
-
-const getSubscriptionIdFromInvoice = (invoice: Stripe.Invoice): string | null => {
-  const subscription = (invoice as any).subscription;
-  if (!subscription) return null;
-  return typeof subscription === 'string' ? subscription : subscription.id;
 };
 
 export const handleWebhook = async (event: Stripe.Event): Promise<void> => {
   if (event.type === 'payment_intent.succeeded') {
     const paymentIntent = event.data.object as Stripe.PaymentIntent;
     await confirmPayment(paymentIntent.id);
-    return;
-  }
-
-  if (event.type === 'invoice.payment_succeeded') {
-    await notifyConfirmedSubscription(event.data.object as Stripe.Invoice);
   }
 };
 

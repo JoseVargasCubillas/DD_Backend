@@ -348,7 +348,7 @@ export const sendOrderConfirmation = (user: IUserDocument, order: IOrderDocument
   }));
 
 // Recibo de compra de un ticket de evento — mismo layout que
-// sendCustomerSubscriptionNotice (Academia), pero sin cuenta de por medio:
+// sendAcademiaOrderReceipt, pero sin cuenta de por medio:
 // no hay CTA de "ir a mi cuenta" ni credenciales, solo el comprobante.
 export const sendEventOrderReceipt = (input: {
   name: string;
@@ -401,7 +401,11 @@ const formatDateEs = (date: Date): string =>
 const formatDateTimeEs = (date: Date): string =>
   `${new Intl.DateTimeFormat('es-MX', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Mexico_City' }).format(date)} CDMX`;
 
-export const sendAdminSubscriptionNotice = (input: {
+// Academia ya no crea Subscriptions de Stripe (ver grantAcademiaAccess en
+// payment.service.ts) — el pago es un Order de un solo cobro y la renovacion
+// es manual, por eso ya no hay cardLabel/nextChargeAt de Stripe Billing:
+// en su lugar se muestra accessUntil, la fecha hasta la que queda el acceso.
+export const sendAcademiaOrderNotice = (input: {
   orderId: string;
   customerId: string;
   customerName: string;
@@ -409,47 +413,42 @@ export const sendAdminSubscriptionNotice = (input: {
   customerPhone: string;
   plan: string;
   amountPaid: number;
-  cardLabel: string;
+  accessUntil: Date;
   receiptUrl: string;
-  nextChargeAt: Date | null;
-  stripeSubscriptionId: string;
-  stripePriceId: string;
   isRenewal?: boolean;
 }): Promise<unknown> =>
   send(
     ADMIN_NOTICE_EMAIL,
-    input.isRenewal ? 'Renovación cobrada en Academia Diego Díaz' : 'Nueva compra confirmada en Academia Diego Díaz',
+    input.isRenewal ? 'Renovación de Academia Diego Díaz' : 'Nueva compra confirmada en Academia Diego Díaz',
     emailShell({
       eyebrow: input.isRenewal ? 'Renovación confirmada' : 'Compra confirmada',
       badge: 'Pagado',
-      title: input.isRenewal ? `Renovación<br/>${accent('cobrada.')}` : `Nueva suscripción<br/>${accent('pagada.')}`,
+      title: input.isRenewal ? `Renovación<br/>${accent('confirmada.')}` : `Nueva compra<br/>${accent('confirmada.')}`,
       lead: input.isRenewal
-        ? 'Stripe cobró la renovación anual de una suscripción activa en Academia+. Los datos del cliente y la referencia interna están abajo.'
-        : 'Stripe confirmó el pago de una nueva suscripción en Academia+. Los datos del cliente y la referencia interna están abajo, listos para seguimiento administrativo.',
+        ? 'Un cliente renovó manualmente su acceso a Academia+. Los datos del cliente y la referencia interna están abajo.'
+        : 'Se confirmó el pago de un nuevo acceso a Academia+. Los datos del cliente y la referencia interna están abajo, listos para seguimiento administrativo.',
       headerCta: { label: 'Ir a admin', url: `${env.clientUrl}/admin` },
       content: `
       ${input.amountPaid ? amountBand(input.isRenewal ? 'Monto renovado' : 'Monto cobrado', formatMXN(input.amountPaid)) : ''}
       ${confirmationPanel({
         label: input.isRenewal ? 'Renovación registrada' : 'Venta registrada',
-        tag: 'Academia+ · anual',
+        tag: 'Academia+ · acceso 1 año',
         value: `Plan ${accent(formatPlanName(input.plan))}`,
         description: input.isRenewal
-          ? 'Datos del cliente y referencia de Stripe para seguimiento administrativo. Es una renovación de una suscripción ya activa.'
-          : 'Datos del cliente y referencia de Stripe para seguimiento administrativo. El cliente ya recibió su correo de bienvenida con acceso al portal.',
+          ? 'Datos del cliente y referencia de la orden para seguimiento administrativo. Es una renovación manual de un acceso ya existente.'
+          : 'Datos del cliente y referencia de la orden para seguimiento administrativo. El cliente ya recibió su correo de acceso al portal.',
         rows: [
           ['Plan', formatPlanName(input.plan)],
           ['Nombre', input.customerName],
           ['Correo', input.customerEmail],
           ['Teléfono', input.customerPhone],
           ...(input.amountPaid ? [['Monto', formatMXN(input.amountPaid)] as [string, string]] : []),
-          ['Stripe Sub', input.stripeSubscriptionId],
-          ...(input.cardLabel ? [['Método', input.cardLabel] as [string, string]] : []),
-          ...(input.nextChargeAt ? [['Próximo cobro', formatDateEs(input.nextChargeAt)] as [string, string]] : []),
+          ['Acceso vigente hasta', formatDateEs(input.accessUntil)],
         ],
       })}
       <div style="margin-top:22px;">
-        ${input.receiptUrl ? linkButton({ label: 'Ver recibo', detail: input.stripeSubscriptionId.slice(0, 10) + '…', url: input.receiptUrl, dark: true }) : ''}
-        ${linkButton({ label: 'Ir a la Academia', detail: input.customerName, url: `${env.clientUrl}/admin/contactos/${input.customerId}`, dark: false })}
+        ${input.receiptUrl ? linkButton({ label: 'Ver recibo', detail: `Orden #${input.orderId.slice(-8).toUpperCase()}`, url: input.receiptUrl, dark: true }) : ''}
+        ${linkButton({ label: 'Ir al contacto', detail: input.customerName, url: `${env.clientUrl}/admin/contactos/${input.customerId}`, dark: false })}
       </div>
     `,
       footerMeta: {
@@ -461,55 +460,49 @@ export const sendAdminSubscriptionNotice = (input: {
         body: `diegodiaz.mx · Academia — enviado a ${ADMIN_NOTICE_EMAIL.toLowerCase()}. Este correo es interno y no contiene datos sensibles del pago.`,
       },
       preheader: input.isRenewal
-        ? `Renovación cobrada: ${formatPlanName(input.plan)}.`
-        : `Nueva suscripción pagada: ${formatPlanName(input.plan)}.`,
+        ? `Renovación confirmada: ${formatPlanName(input.plan)}.`
+        : `Nueva compra confirmada: ${formatPlanName(input.plan)}.`,
     }),
   );
 
-export const sendCustomerSubscriptionNotice = (input: {
+export const sendAcademiaOrderReceipt = (input: {
   orderId: string;
   customerName: string;
   customerEmail: string;
   customerPhone: string;
   plan: string;
   amountPaid: number;
-  cardLabel: string;
+  accessUntil: Date;
   receiptUrl: string;
-  nextChargeAt: Date | null;
-  stripeSubscriptionId: string;
   isRenewal?: boolean;
 }): Promise<unknown> =>
   send(
     input.customerEmail,
-    input.isRenewal ? 'Tu suscripción se renovó - Academia Diego Díaz' : 'Tu pago fue confirmado - Academia Diego Díaz',
+    input.isRenewal ? 'Tu acceso a Academia se renovó - Academia Diego Díaz' : 'Tu pago fue confirmado - Academia Diego Díaz',
     emailShell({
       eyebrow: input.isRenewal ? 'Renovación confirmada' : 'Compra confirmada',
       badge: 'Pagado',
-      title: input.isRenewal ? `Tu suscripción<br/>se ${accent('renovó.')}` : `Tu pago<br/>fue ${accent('confirmado.')}`,
+      title: input.isRenewal ? `Tu acceso<br/>se ${accent('renovó.')}` : `Tu pago<br/>fue ${accent('confirmado.')}`,
       lead: input.isRenewal
-        ? `Hola ${input.customerName}, tu suscripción a Academia Diego Díaz se renovó por un año más.`
+        ? `Hola ${input.customerName}, renovaste tu acceso a Academia Diego Díaz por un año más.`
         : `Hola ${input.customerName}, gracias por unirte a Academia Diego Díaz.`,
       content: `
       ${input.amountPaid ? amountBand(input.isRenewal ? 'Monto renovado' : 'Monto pagado', formatMXN(input.amountPaid)) : ''}
       ${confirmationPanel({
         label: input.isRenewal ? 'Renovación confirmada' : 'Acceso confirmado',
-        tag: 'Academia+ · anual',
+        tag: 'Academia+ · acceso 1 año',
         value: accent(formatPlanName(input.plan)),
-        description: input.isRenewal
-          ? 'Tu suscripción sigue activa por un año más. Conserva esta información como referencia de tu registro.'
-          : 'Tu suscripción quedó activa. Conserva esta información como referencia de tu registro.',
+        description: `Tu acceso queda activo hasta el ${formatDateEs(input.accessUntil)}. La renovación es manual — te avisaremos por correo antes de que se venza.`,
         rows: [
           ['Plan', formatPlanName(input.plan)],
           ['Correo', input.customerEmail],
           ['Teléfono', input.customerPhone],
           ...(input.amountPaid ? [['Monto', formatMXN(input.amountPaid)] as [string, string]] : []),
-          ...(input.cardLabel ? [['Método', input.cardLabel] as [string, string]] : []),
-          ...(input.nextChargeAt ? [['Próximo cobro', formatDateEs(input.nextChargeAt)] as [string, string]] : []),
-          ['Referencia', input.stripeSubscriptionId],
+          ['Acceso vigente hasta', formatDateEs(input.accessUntil)],
         ],
       })}
       <div style="margin-top:22px;">
-        ${input.receiptUrl ? linkButton({ label: 'Ver recibo', detail: input.stripeSubscriptionId.slice(0, 10) + '…', url: input.receiptUrl, dark: true }) : ''}
+        ${input.receiptUrl ? linkButton({ label: 'Ver recibo', detail: `Orden #${input.orderId.slice(-8).toUpperCase()}`, url: input.receiptUrl, dark: true }) : ''}
       </div>
     `,
       ctaLabel: 'Entrar a Academia',
@@ -519,8 +512,75 @@ export const sendCustomerSubscriptionNotice = (input: {
         right: formatDateTimeEs(new Date()),
       },
       preheader: input.isRenewal
-        ? `Tu suscripción de Academia ${formatPlanName(input.plan)} se renovó.`
+        ? `Tu acceso a Academia ${formatPlanName(input.plan)} se renovó.`
         : `Tu pago de Academia ${formatPlanName(input.plan)} fue confirmado.`,
+    }),
+  );
+
+// Recordatorio antes del vencimiento — mismo texto para la ventana de 7 dias
+// y la de 1 dia/dia-de, solo cambia la urgencia del copy segun daysLeft.
+export const sendAcademiaRenewalReminder = (input: {
+  name: string;
+  email: string;
+  offerTitle: string;
+  expiresAt: Date;
+  daysLeft: number;
+  renewUrl: string;
+}): Promise<unknown> => {
+  const urgent = input.daysLeft <= 1;
+  const whenText = input.daysLeft <= 0 ? 'hoy' : input.daysLeft === 1 ? 'mañana' : `en ${input.daysLeft} días`;
+  return send(
+    input.email,
+    urgent ? `Tu acceso a Academia vence ${whenText}` : `Tu acceso a Academia vence en ${input.daysLeft} días`,
+    emailShell({
+      eyebrow: 'Recordatorio de renovación',
+      badge: urgent ? 'Vence pronto' : 'Recordatorio',
+      title: `Tu acceso vence<br/>${accent(whenText + '.')}`,
+      lead: `Hola ${input.name}, tu acceso a ${input.offerTitle} vence ${whenText}. Renueva para no perder el acceso a tus cursos.`,
+      content: `
+      ${confirmationPanel({
+        label: 'Acceso por vencer',
+        tag: 'Academia+',
+        value: accent(input.offerTitle),
+        description: 'La renovación es manual: si no renuevas antes de la fecha, tu acceso a los cursos se corta automáticamente.',
+        rows: [
+          ['Oferta', input.offerTitle],
+          ['Vence el', formatDateEs(input.expiresAt)],
+        ],
+      })}
+    `,
+      ctaLabel: 'Renovar ahora',
+      ctaUrl: input.renewUrl,
+      preheader: `Tu acceso a ${input.offerTitle} vence ${whenText}.`,
+    }),
+  );
+};
+
+export const sendAcademiaExpiredNotice = (input: {
+  name: string;
+  email: string;
+  offerTitle: string;
+  renewUrl: string;
+}): Promise<unknown> =>
+  send(
+    input.email,
+    'Tu acceso a Academia venció',
+    emailShell({
+      eyebrow: 'Acceso vencido',
+      title: `Tu acceso<br/>${accent('venció.')}`,
+      lead: `Hola ${input.name}, tu acceso a ${input.offerTitle} venció y tus cursos quedaron bloqueados. Renueva cuando quieras para recuperarlo.`,
+      content: `
+      ${confirmationPanel({
+        label: 'Acceso vencido',
+        tag: 'Academia+',
+        value: accent(input.offerTitle),
+        description: 'Tu progreso se conserva — al renovar recuperas el acceso donde lo dejaste.',
+        rows: [['Oferta', input.offerTitle]],
+      })}
+    `,
+      ctaLabel: 'Renovar ahora',
+      ctaUrl: input.renewUrl,
+      preheader: `Tu acceso a ${input.offerTitle} venció.`,
     }),
   );
 

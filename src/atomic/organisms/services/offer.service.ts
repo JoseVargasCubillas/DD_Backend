@@ -24,7 +24,7 @@ const normalizeDate = (value: unknown): string | null => {
   return date.toISOString();
 };
 
-const isOfferActive = (offer: IOfferDocument): boolean => {
+export const isOfferActive = (offer: IOfferDocument): boolean => {
   if (offer.status !== 'published') return false;
   const now = Date.now();
   if (offer.startsAt && new Date(String(offer.startsAt)).getTime() > now) return false;
@@ -79,6 +79,14 @@ const normalizeOfferTarget = async (
     targetId: targetId || firstCourseId,
     content,
   };
+};
+
+export const findOfferByIdentity = async (refId: string): Promise<IOfferDocument | null> => {
+  const byId = await Offer.findById(refId);
+  if (byId) return byId;
+  const bySlug = await Offer.findOne({ slug: refId });
+  if (bySlug) return bySlug;
+  return Offer.findOne({ id: refId } as any);
 };
 
 export const listOffers = async () => {

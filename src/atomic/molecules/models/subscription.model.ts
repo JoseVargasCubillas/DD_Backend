@@ -7,6 +7,10 @@ export interface ISubscriptionDocument extends SqlDocumentMethods<ISubscriptionD
   plan: string;
   offerId?: string;
   packageId?: string;
+  // Order que originó esta compra pagada de Academia (Order de un solo pago,
+  // ver grantAcademiaAccess en payment.service.ts). Vacío en accesos gratis
+  // otorgados a mano (assignPackageToUser / importaciones).
+  orderId?: string;
   status: string;
   stripeSubscriptionId: string;
   stripePriceId: string;
@@ -16,6 +20,8 @@ export interface ISubscriptionDocument extends SqlDocumentMethods<ISubscriptionD
   canceledAt?: Date | string | null;
   purchaseNotifiedAt?: Date | string | null;
   lastNotifiedInvoiceId?: string | null;
+  renewalReminder7dSentAt?: Date | string | null;
+  renewalReminder1dSentAt?: Date | string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
 }
@@ -26,10 +32,13 @@ export const Subscription = createSqlModel<ISubscriptionDocument>({
     plan: PLANS.FREE,
     offerId: '',
     packageId: '',
+    orderId: '',
     status: SUBSCRIPTION_STATUS.ACTIVE,
     cancelAtPeriodEnd: false,
     canceledAt: null,
     purchaseNotifiedAt: null,
     lastNotifiedInvoiceId: null,
+    renewalReminder7dSentAt: null,
+    renewalReminder1dSentAt: null,
   }),
 });

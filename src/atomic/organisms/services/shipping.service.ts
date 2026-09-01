@@ -25,6 +25,7 @@ interface EnviaAddress {
 }
 
 export interface ShippingPackage {
+  type: 'envelope' | 'box';
   content: string;
   weightKg: number;
   lengthCm: number;
@@ -102,7 +103,7 @@ const splitStreetAndNumber = (streetInput: string): { street: string; number: st
 
 const toEnviaPackages = (packages: ShippingPackage[]) =>
   packages.map((pkg) => ({
-    type: 'box',
+    type: pkg.type,
     content: pkg.content,
     amount: 1,
     declaredValue: pkg.declaredValue,

@@ -12,6 +12,63 @@ import { enqueueMigrationWelcome } from './email-queue.service.js';
 const makeError = (message: string, statusCode: number): Error =>
   Object.assign(new Error(message), { statusCode });
 
+export type CheckoutCustomer = { name?: string; email?: string; phone?: string };
+
+export const normalizeCustomer = (customer?: CheckoutCustomer): Required<CheckoutCustomer> => {
+  const name = String(customer?.name || '').trim();
+  const email = String(customer?.email || '').trim().toLowerCase();
+  const phone = String(customer?.phone || '').trim();
+  if (name.length < 2) throw makeError('Nombre requerido', 400);
+  if (!/\S+@\S+\.\S+/.test(email)) throw makeError('Correo electronico invalido', 400);
+  if (phone.length < 8) throw makeError('Telefono requerido', 400);
+  return { name, email, phone };
+};
+
+// Busca o crea la cuenta real que necesita un checkout con acceso a cursos
+// (Academia) — a diferencia del checkout de invitado de libros/eventos, que
+// solo guarda un IOrderContact y nunca crea User.
+export const getCheckoutUser = async (userId?: string, customer?: CheckoutCustomer): Promise<IUserDocument> => {
+  if (userId) {
+    const user = await User.findById(userId);
+    if (!user) throw makeError('User not found', 404);
+    if (customer) {
+      const normalized = normalizeCustomer(customer);
+      user.name = normalized.name;
+      user.email = normalized.email;
+      user.phone = normalized.phone;
+      await user.save();
+    }
+    return user;
+  }
+
+  const normalized = normalizeCustomer(customer);
+  const existing = await User.findOne({ email: normalized.email });
+  if (existing) {
+    existing.name = normalized.name;
+    existing.phone = normalized.phone;
+    existing.contactStatus = existing.contactStatus || 'lead';
+    await existing.save();
+    return existing;
+  }
+
+  // Password vacia: no es utilizable para iniciar sesion hasta que el pago se
+  // confirme (ver grantAcademiaAccess en payment.service.ts), que es cuando
+  // se genera la contrasena temporal real y se manda por correo.
+  return User.create({
+    name: normalized.name,
+    email: normalized.email,
+    phone: normalized.phone,
+    password: '',
+    role: 'user',
+    plan: 'guest',
+    notes: 'Cliente registrado desde checkout publico de Academia.',
+    contactStatus: 'lead',
+    marketingStatus: 'subscribed',
+    isActive: true,
+    isEmailVerified: false,
+  } as Partial<IUserDocument>);
+};
+
 interface ListParams { page?: number; limit?: number; search?: string; tagId?: string; role?: string; sort?: string; segment?: string }
 export interface ImportContactInput {
   name: string;
