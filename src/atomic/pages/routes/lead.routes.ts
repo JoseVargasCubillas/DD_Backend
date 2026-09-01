@@ -21,5 +21,7 @@ router.post('/resource', guideLimiter, leadController.requestDownloadableResourc
 router.post('/newsletter', guideLimiter, leadController.subscribeNewsletter);
 router.post('/sat-waitlist', guideLimiter, leadController.subscribeSatWaitlist);
 router.get('/', authenticate, requireAdmin, leadController.list);
+router.post('/bulk-delete', authenticate, requireAdmin, leadController.bulkRemove);
+router.delete('/:id', authenticate, requireAdmin, leadController.remove);
 
 export default router;

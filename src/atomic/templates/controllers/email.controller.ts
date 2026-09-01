@@ -16,7 +16,6 @@ const GUIDE_LEAD_SOURCES = [
   'media-kit',
   'estrategia-fiscal-dossier',
   'centro-recursos',
-  'newsletter',
 ];
 
 const dedupeByEmail = (list: Recipient[]): Recipient[] => {
@@ -50,6 +49,9 @@ const resolveTargets = async (
   if (segment.startsWith('lead-source:')) {
     const source = segment.slice('lead-source:'.length);
     return dedupeByEmail(await fetchLeadRecipients(source));
+  }
+  if (segment === 'newsletter-leads') {
+    return dedupeByEmail(await fetchLeadRecipients('newsletter'));
   }
 
   // Segmentos basados en tabla `users`
@@ -165,6 +167,7 @@ export const getSegments: RequestHandler = async (_req, res) => {
     );
 
     const guiaSat = allLeads.filter((l) => l.source === 'guia-blindaje-sat').length;
+    const newsletterLeads = allLeads.filter((l) => l.source === 'newsletter').length;
 
     const segments = {
       all: allUsers.length,
@@ -172,6 +175,7 @@ export const getSegments: RequestHandler = async (_req, res) => {
       customers: allUsers.filter((u) => u.contactStatus === 'customer').length,
       leads: allUsers.filter((u) => u.contactStatus === 'lead').length,
       guideLeads: guideLeadRecipients.length,
+      newsletterLeads,
       guiaSat,
     };
 

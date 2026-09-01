@@ -222,11 +222,16 @@ export const sendDownloadableResource = async (input: {
 export const subscribeNewsletter = async (input: {
   email: string;
   name?: string;
+  meta?: Record<string, unknown>;
 }): Promise<ILeadDocument> => {
   return captureLead({
     email: input.email,
     name: input.name,
     source: 'newsletter',
+    meta: {
+      leadType: 'mailing-subscription',
+      ...(input.meta ?? {}),
+    },
   });
 };
 
@@ -248,4 +253,39 @@ export const listLeads = async (source?: LeadSource): Promise<ILeadDocument[]> =
   return leads.sort(
     (a, b) => new Date(String(b.createdAt)).getTime() - new Date(String(a.createdAt)).getTime(),
   );
+};
+
+export const deleteLead = async (id: string): Promise<ILeadDocument | null> => {
+  if (!id?.trim()) {
+    const err: any = new Error('El lead es requerido.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  return Lead.findByIdAndDelete(id.trim());
+};
+
+export const deleteLeads = async (ids: string[]): Promise<{ deleted: number; missing: string[] }> => {
+  const uniqueIds = Array.from(new Set(ids.map((id) => String(id).trim()).filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    const err: any = new Error('Selecciona al menos un lead.');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (uniqueIds.length > 500) {
+    const err: any = new Error('Puedes borrar máximo 500 leads por operación.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  let deleted = 0;
+  const missing: string[] = [];
+
+  for (const id of uniqueIds) {
+    const removed = await Lead.findByIdAndDelete(id);
+    if (removed) deleted += 1;
+    else missing.push(id);
+  }
+
+  return { deleted, missing };
 };
