@@ -38,6 +38,31 @@ export const refresh: RequestHandler = async (req, res) => {
 
 export const me: RequestHandler = (req, res) => success(res, (req as any).user);
 
+// Siempre responde genérico (no revela si el correo existe en la base).
+export const forgotPassword: RequestHandler = async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) { badRequest(res, errors.array()[0].msg as string); return; }
+  const { email } = req.body as { email: string };
+  try {
+    await authService.forgotPassword(email);
+  } catch (err) {
+    console.warn('[forgotPassword]', (err as Error).message);
+  }
+  success(res, { message: 'Si el correo existe, enviamos instrucciones para restablecer tu contraseña.' });
+};
+
+export const resetPassword: RequestHandler = async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) { badRequest(res, errors.array()[0].msg as string); return; }
+  const { token, email, password } = req.body as { token: string; email: string; password: string };
+  try {
+    await authService.resetPassword({ token, email, password });
+    success(res, { message: 'Tu contraseña fue actualizada correctamente.' });
+  } catch (err: any) {
+    res.status(err.statusCode ?? 500).json({ success: false, message: err.message });
+  }
+};
+
 // Admin: crear cuenta de cliente y enviar credenciales por correo.
 export const adminCreateUser: RequestHandler = async (req, res) => {
   const { name, email, role, tagIds, courseIds, marketingStatus } = req.body as {

@@ -587,4 +587,80 @@ export const sendMediaKitEmail = (
     }),
   );
 
+export const sendEstrategiaFiscalDossierEmail = (
+  input: {
+    email: string;
+    name?: string;
+    phone?: string;
+    dossierPath: string;
+    dossierFilename: string;
+  },
+): Promise<unknown> =>
+  sendWithAttachments(
+    input.email,
+    'Tu dossier del Seminario Estrategia Fiscal — Diego Díaz',
+    emailShell({
+      eyebrow: 'Dossier · Estrategia Fiscal',
+      badge: 'PDF · Seminario',
+      title: `Aquí está tu dossier<br/>de Estrategia ${accent('Fiscal.')}`,
+      lead: input.name
+        ? `Hola ${input.name}, adjuntamos el dossier oficial del Seminario de Estrategia Fiscal.`
+        : 'Adjuntamos el dossier oficial del Seminario de Estrategia Fiscal.',
+      content: `
+        <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
+          En este material encontrarás la información base del seminario, el enfoque de trabajo y los puntos clave para decidir si esta edición encaja con el momento fiscal de tu empresa.
+        </p>
+        <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
+          Guardamos tus datos para poder dar seguimiento a tu solicitud del dossier. Si quieres reservar tu lugar, responde este correo y el equipo te orienta.
+        </p>
+        ${detailRows([
+          ['Recurso', input.dossierFilename],
+          ['Correo', input.email],
+          ...(input.phone ? [['Teléfono', input.phone] as [string, string]] : []),
+        ])}
+      `,
+      ctaLabel: 'Ver calendario',
+      ctaUrl: `${env.clientUrl}/eventos`,
+      preheader: 'Adjuntamos tu dossier del Seminario de Estrategia Fiscal.',
+    }),
+    [
+      {
+        filename: input.dossierFilename,
+        path: input.dossierPath,
+        contentType: 'application/pdf',
+      },
+    ],
+  );
+
+export const sendDownloadableResourceEmail = (
+  input: { email: string; name?: string; resourceTitle: string; downloadUrl: string },
+): Promise<unknown> =>
+  send(
+    input.email,
+    `${input.resourceTitle} — Centro de Recursos Diego Díaz`,
+    emailShell({
+      eyebrow: 'Centro de Recursos · Descarga',
+      badge: 'PDF',
+      title: `Tu recurso está<br/>listo para ${accent('descargar.')}`,
+      lead: input.name
+        ? `Hola ${input.name}, aquí tienes el enlace para descargar "${input.resourceTitle}".`
+        : `Aquí tienes el enlace para descargar "${input.resourceTitle}".`,
+      content: `
+        <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
+          Guardamos tu solicitud para poder enviarte actualizaciones relevantes sobre recursos fiscales, guías y herramientas de Diego Díaz.
+        </p>
+        <div style="margin:22px 0 8px;">
+          ${linkButton({ label: 'Descargar recurso', detail: escapeHtml(input.resourceTitle), url: input.downloadUrl, dark: true })}
+        </div>
+        <p style="margin:20px 0 0;color:#5f574f;font-size:14px;line-height:1.7;">
+          Si el botón no abre, copia y pega este enlace en tu navegador:<br/>
+          <span style="word-break:break-all;color:#111;">${escapeHtml(input.downloadUrl)}</span>
+        </p>
+      `,
+      ctaLabel: 'Ver más recursos',
+      ctaUrl: `${env.clientUrl}/recursos`,
+      preheader: `Descarga ${input.resourceTitle} desde el Centro de Recursos.`,
+    }),
+  );
+
 

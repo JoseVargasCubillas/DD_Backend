@@ -3,6 +3,8 @@ import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
 export type LeadSource =
   | 'guia-blindaje-sat'
   | 'media-kit'
+  | 'estrategia-fiscal-dossier'
+  | 'centro-recursos'
   | 'newsletter'
   | 'contact'
   | 'other';

@@ -18,3 +18,13 @@ export const changePasswordValidator = [
   body('currentPassword').notEmpty(),
   body('newPassword').isLength({ min: 8 }),
 ];
+
+export const forgotPasswordValidator = [
+  body('email').isEmail().customSanitizer((value) => String(value).trim().toLowerCase()).withMessage('Valid email required'),
+];
+
+export const resetPasswordValidator = [
+  body('token').notEmpty().withMessage('Token is required'),
+  body('email').isEmail().customSanitizer((value) => String(value).trim().toLowerCase()).withMessage('Valid email required'),
+  body('password').isLength({ min: 8 }).withMessage('Password min 8 chars'),
+];

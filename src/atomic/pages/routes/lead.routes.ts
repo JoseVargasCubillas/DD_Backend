@@ -16,6 +16,9 @@ const router = Router();
 
 router.post('/sat-guide', guideLimiter, leadController.requestSatGuide);
 router.post('/media-kit', guideLimiter, leadController.requestMediaKit);
+router.post('/estrategia-fiscal-dossier', guideLimiter, leadController.requestEstrategiaFiscalDossier);
+router.post('/resource', guideLimiter, leadController.requestDownloadableResource);
+router.post('/newsletter', guideLimiter, leadController.subscribeNewsletter);
 router.get('/', authenticate, requireAdmin, leadController.list);
 
 export default router;

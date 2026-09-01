@@ -11,7 +11,13 @@ interface Recipient {
 }
 
 // Fuentes que consideramos "leads editoriales" (recursos descargables públicos)
-const GUIDE_LEAD_SOURCES = ['guia-blindaje-sat', 'media-kit', 'newsletter'];
+const GUIDE_LEAD_SOURCES = [
+  'guia-blindaje-sat',
+  'media-kit',
+  'estrategia-fiscal-dossier',
+  'centro-recursos',
+  'newsletter',
+];
 
 const dedupeByEmail = (list: Recipient[]): Recipient[] => {
   const map = new Map<string, Recipient>();
