@@ -7,6 +7,10 @@ interface OrderItem {
   title: string;
   price: number;
   quantity?: number;
+  weightKg?: number;
+  lengthCm?: number;
+  widthCm?: number;
+  heightCm?: number;
 }
 
 export interface IOrderShippingAddress {
@@ -34,6 +38,14 @@ export interface IOrderDocument extends SqlDocumentMethods<IOrderDocument> {
   tax: number;
   shippingCost: number;
   shipping: IOrderShippingAddress | null;
+  // Carrier+service elegidos por el cliente en el checkout (cotizado con
+  // Envia). Se usan para generar la guia real una vez que el pago se
+  // confirma — ver confirmPayment en payment.service.ts.
+  shippingCarrier: string;
+  shippingService: string;
+  shippingTrackingNumber: string;
+  shippingLabelUrl: string;
+  shippingTrackUrl: string;
   total: number;
   currency: string;
   status: string;
@@ -53,6 +65,11 @@ export const Order = createSqlModel<IOrderDocument>({
     tax: 0,
     shippingCost: 0,
     shipping: null,
+    shippingCarrier: '',
+    shippingService: '',
+    shippingTrackingNumber: '',
+    shippingLabelUrl: '',
+    shippingTrackUrl: '',
     currency: 'MXN',
     status: ORDER_STATUS.PENDING,
     stripePaymentIntentId: '',

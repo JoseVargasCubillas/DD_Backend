@@ -15,6 +15,10 @@ type BookSeed = {
   language: string;
   year: number;
   stock: number;
+  weightKg: number;
+  lengthCm: number;
+  widthCm: number;
+  heightCm: number;
 };
 
 const books: BookSeed[] = [
@@ -31,6 +35,10 @@ const books: BookSeed[] = [
     language: 'Español',
     year: 2024,
     stock: 500,
+    weightKg: 0.45,
+    lengthCm: 23,
+    widthCm: 16,
+    heightCm: 2.5,
   },
   {
     id: 'book_7_secretos_sat',
@@ -38,13 +46,17 @@ const books: BookSeed[] = [
     slug: '7-secretos-sat',
     subtitle: 'Que el SAT no quiere que conozcas.',
     description: 'El libro más vendido de Diego sobre los puntos ciegos, mitos y herramientas que el empresario mexicano debe entender antes de una revisión.',
-    price: 420,
+    price: 497,
     shippingCost: 0,
     format: 'Pasta dura',
     pages: 328,
     language: 'Español',
     year: 2021,
     stock: 0,
+    weightKg: 0.65,
+    lengthCm: 23,
+    widthCm: 16,
+    heightCm: 3.5,
   },
   {
     id: 'book_7_secretos_fiscalista',
@@ -52,13 +64,35 @@ const books: BookSeed[] = [
     slug: '7-secretos-fiscalista',
     subtitle: 'La mentalidad detrás de la estrategia fiscal moderna.',
     description: 'Diego comparte cómo piensa, cómo decide y cómo construye estrategia un fiscalista mexicano que asesora a empresas medianas y grandes.',
-    price: 520,
+    price: 497,
     shippingCost: 0,
     format: 'Pasta dura',
     pages: 348,
     language: 'Español',
     year: 2024,
     stock: 250,
+    weightKg: 0.65,
+    lengthCm: 23,
+    widthCm: 16,
+    heightCm: 3.5,
+  },
+  {
+    id: 'book_bundle_tres_libros',
+    title: 'Bundle · Los tres libros (caja firmada)',
+    slug: 'bundle-tres-libros',
+    subtitle: 'La biblioteca completa del estratega fiscal, en una sola caja.',
+    description: 'Los tres libros de Diego Díaz — 7 Claves para cobrar a tu empresa, Los 7 secretos que el SAT no quiere que conozcas y 7 Secretos de un fiscalista — en caja de lino impresa, con dedicatoria firmada por Diego a quien tú elijas.',
+    price: 980,
+    shippingCost: 0,
+    format: 'Caja de lino · edición especial',
+    pages: 988,
+    language: 'Español',
+    year: 2024,
+    stock: 100,
+    weightKg: 1.9,
+    lengthCm: 26,
+    widthCm: 20,
+    heightCm: 8,
   },
 ];
 
@@ -85,6 +119,10 @@ const main = async () => {
       coverImage: existing?.coverImage ?? '',
       stock: seed.stock,
       isActive: true,
+      weightKg: seed.weightKg,
+      lengthCm: seed.lengthCm,
+      widthCm: seed.widthCm,
+      heightCm: seed.heightCm,
     };
 
     if (existing) {

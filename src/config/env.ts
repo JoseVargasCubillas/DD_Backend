@@ -50,4 +50,20 @@ export const env = {
     pass: process.env.MAIL_PASS ?? '',
     from: process.env.MAIL_FROM ?? '',
   },
+  envia: {
+    env: process.env.ENVIA_ENV ?? 'sandbox',
+    token: process.env.ENVIA_TOKEN ?? '',
+    labelPrintFormat: process.env.ENVIA_LABEL_PRINT_FORMAT ?? 'PDF',
+    labelPrintSize: process.env.ENVIA_LABEL_PRINT_SIZE ?? 'STOCK_4X6',
+    origin: {
+      name: process.env.ENVIA_ORIGIN_NAME ?? '',
+      phone: process.env.ENVIA_ORIGIN_PHONE ?? '',
+      street: process.env.ENVIA_ORIGIN_STREET ?? '',
+      number: process.env.ENVIA_ORIGIN_NUMBER ?? '',
+      district: process.env.ENVIA_ORIGIN_DISTRICT ?? '',
+      city: process.env.ENVIA_ORIGIN_CITY ?? '',
+      state: process.env.ENVIA_ORIGIN_STATE ?? '',
+      postalCode: process.env.ENVIA_ORIGIN_POSTAL_CODE ?? '',
+    },
+  },
 } as const;

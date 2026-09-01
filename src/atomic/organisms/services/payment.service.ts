@@ -13,10 +13,22 @@ import {
   sendEventOrderReceipt,
 } from './email.service.js';
 import { hashPassword, generateTempPassword } from '../../atoms/helpers/hash.helper.js';
+import { getShippingRate, getShippingRates, generateShippingLabel, ShippingPackage } from './shipping.service.js';
 import Stripe from 'stripe';
 
-interface OrderItemInput { type: string; refId: string; title: string; price: number; quantity?: number }
+interface OrderItemInput {
+  type: string;
+  refId: string;
+  title: string;
+  price: number;
+  quantity?: number;
+  weightKg?: number;
+  lengthCm?: number;
+  widthCm?: number;
+  heightCm?: number;
+}
 interface CheckoutContactInput { name?: string; email?: string; phone?: string }
+interface ShippingSelectionInput { carrier?: string; service?: string }
 
 const makeError = (msg: string, code: number): Error => Object.assign(new Error(msg), { statusCode: code });
 const ANNUAL_ACCESS_DAYS = 365;
@@ -53,6 +65,10 @@ const normalizeOrderItems = async (items: OrderItemInput[]): Promise<OrderItemIn
           title: book.title,
           price: Number(book.price),
           quantity,
+          weightKg: Number(book.weightKg || 0.5),
+          lengthCm: Number(book.lengthCm || 23),
+          widthCm: Number(book.widthCm || 16),
+          heightCm: Number(book.heightCm || 3),
         };
       }
 
@@ -95,27 +111,99 @@ const normalizeGuestContact = (contact?: CheckoutContactInput): IOrderContact =>
   return { name, email, phone };
 };
 
-// Los tickets de evento nunca requieren cuenta: no se crea ni se asocia
-// ningun User, solo se guarda el contacto (nombre + correo) en la orden
-// para poder mandar el recibo. Cualquier otro tipo de compra (libros,
-// cursos, suscripciones) sigue requiriendo sesion iniciada.
+// Tickets de evento y libros nunca requieren cuenta: si hay sesion iniciada
+// se usa (para que la compra aparezca en "Mis pedidos"), si no, se guarda
+// solo el contacto (nombre + correo + telefono) en la orden para poder
+// mandar el recibo. Suscripciones y cursos siguen requiriendo sesion.
 const resolveOrderOwner = (
   userId: string | undefined,
-  isEventOnly: boolean,
+  allowsGuestCheckout: boolean,
   customer?: CheckoutContactInput,
 ): { user: string; contact: IOrderContact | null } => {
-  if (isEventOnly) return { user: '', contact: normalizeGuestContact(customer) };
-  if (!userId) throw makeError('Inicia sesión para continuar', 401);
-  return { user: userId, contact: null };
+  if (userId) return { user: userId, contact: null };
+  if (allowsGuestCheckout) return { user: '', contact: normalizeGuestContact(customer) };
+  throw makeError('Inicia sesión para continuar', 401);
 };
 
+// Todos los productos fisicos del pedido se envian juntos en una sola caja:
+// el peso se suma y el alto se apila; largo/ancho toman el mayor de los items.
+const buildShippingPackages = (items: OrderItemInput[]): ShippingPackage[] => {
+  const products = items.filter((i) => i.type === 'product');
+  if (!products.length) return [];
+
+  const totals = products.reduce(
+    (acc, item) => {
+      const quantity = item.quantity ?? 1;
+      acc.weightKg += (item.weightKg ?? 0.5) * quantity;
+      acc.heightCm += (item.heightCm ?? 3) * quantity;
+      acc.lengthCm = Math.max(acc.lengthCm, item.lengthCm ?? 23);
+      acc.widthCm = Math.max(acc.widthCm, item.widthCm ?? 16);
+      acc.declaredValue += item.price * quantity;
+      return acc;
+    },
+    { weightKg: 0, heightCm: 0, lengthCm: 0, widthCm: 0, declaredValue: 0 },
+  );
+
+  return [
+    {
+      content: products.map((p) => p.title).join(', ').slice(0, 100),
+      weightKg: Math.round(totals.weightKg * 100) / 100,
+      lengthCm: totals.lengthCm,
+      widthCm: totals.widthCm,
+      heightCm: Math.round(totals.heightCm * 100) / 100,
+      declaredValue: Math.round(totals.declaredValue * 100) / 100,
+    },
+  ];
+};
+
+// Antes solo mandaba recibo a compras de invitado (order.contact). Las
+// compras de libros con sesion iniciada (order.user, sin contact) se
+// quedaban sin ningun correo de confirmacion — se resuelve el destinatario
+// contra el User cuando no hay contact de invitado.
 const sendReceiptIfEventOrder = async (order: IOrderDocument): Promise<void> => {
-  if (!order.contact) return;
+  const recipient = order.contact
+    ? { name: order.contact.name, email: order.contact.email }
+    : order.user
+      ? await User.findById(order.user).then((user) => (user?.email ? { name: user.name || 'Cliente', email: user.email } : null))
+      : null;
+  if (!recipient) return;
+
   try {
-    await sendEventOrderReceipt({ name: order.contact.name, email: order.contact.email, order });
+    await sendEventOrderReceipt({ name: recipient.name, email: recipient.email, order });
   } catch (err) {
     console.warn('[sendReceiptIfEventOrder] failed:', (err as Error).message);
   }
+};
+
+// Best effort: si Envia falla, el pago ya esta confirmado y la orden sigue
+// completa — no se bloquea la confirmacion por un problema de paqueteria.
+// El admin puede reintentar manualmente si esto no genera la guia.
+const generateOrderShippingLabelIfNeeded = async (order: IOrderDocument): Promise<void> => {
+  if (!order.shipping || !order.shippingCarrier || !order.shippingService) return;
+  if (order.shippingTrackingNumber) return;
+
+  try {
+    const packages = buildShippingPackages(order.items);
+    if (!packages.length) return;
+    const label = await generateShippingLabel(order.shipping, packages, order.shippingCarrier, order.shippingService);
+    order.shippingTrackingNumber = label.trackingNumber;
+    order.shippingLabelUrl = label.labelUrl;
+    order.shippingTrackUrl = label.trackUrl;
+    await order.save();
+  } catch (err) {
+    console.warn('[generateOrderShippingLabelIfNeeded] failed:', (err as Error).message);
+  }
+};
+
+// Cotizacion en tiempo real para el paso de envio del checkout — se llama
+// antes de crear el payment intent, para que el cliente elija carrier antes
+// de pagar. Reusa normalizeOrderItems para validar los libros igual que
+// createPaymentIntent (mismo catalogo autoritativo, nunca el que manda el cliente).
+export const quoteShipping = async (items: OrderItemInput[], shipping: IOrderShippingAddress) => {
+  const normalizedItems = await normalizeOrderItems(items);
+  const packages = buildShippingPackages(normalizedItems);
+  if (!packages.length) return [];
+  return getShippingRates(shipping, packages);
 };
 
 // Pedidos con envío (productos físicos, ej. libros) calculan subtotal + envío + IVA por separado.
@@ -126,26 +214,46 @@ export const createPaymentIntent = async (
   items: OrderItemInput[],
   shipping?: IOrderShippingAddress,
   customer?: CheckoutContactInput,
+  shippingSelection?: ShippingSelectionInput,
 ) => {
   const normalizedItems = await normalizeOrderItems(items);
-  const isEventOnly = normalizedItems.every((i) => i.type === 'event');
-  const { user, contact } = resolveOrderOwner(userId, isEventOnly, customer);
+  const allowsGuestCheckout = normalizedItems.every((i) => i.type === 'event' || i.type === 'product');
+  const { user, contact } = resolveOrderOwner(userId, allowsGuestCheckout, customer);
   const subtotal = normalizedItems.reduce((sum, i) => sum + i.price * (i.quantity ?? 1), 0);
   const requiresShipping = Boolean(shipping) || normalizedItems.some((i) => i.type === 'product');
-  const shippingCost = requiresShipping ? 0 : 0;
+
+  // El envio ya esta incluido en el precio del libro — el costo real se paga
+  // con el saldo de la cuenta de Envia, nunca se le cobra aparte al cliente.
+  // Aun asi se valida server-side que el carrier+service elegido sea uno
+  // real y vigente (mismo principio que el resto del catalogo autoritativo),
+  // y se guarda para poder generar la guia cuando el pago se confirme.
+  const shippingCost = 0;
+  let shippingCarrier = '';
+  let shippingService = '';
+  if (requiresShipping && shipping && shippingSelection?.carrier && shippingSelection.service) {
+    const packages = buildShippingPackages(normalizedItems);
+    if (packages.length) {
+      const rate = await getShippingRate(shipping, packages, shippingSelection.carrier, shippingSelection.service);
+      shippingCarrier = rate.carrier;
+      shippingService = rate.service;
+    }
+  }
+
   const tax = 0;
-  const total = requiresShipping ? subtotal + shippingCost + tax : subtotal;
+  const total = subtotal + tax;
 
   if (!isStripeConfigured()) {
     const demoPaymentIntentId = `demo_pi_${Date.now()}`;
     const order = await Order.create({
-      user, contact, items: normalizedItems, subtotal, tax, shippingCost, shipping: shipping ?? null, total,
+      user, contact, items: normalizedItems, subtotal, tax, shippingCost, shipping: shipping ?? null,
+      shippingCarrier, shippingService, total,
       status: ORDER_STATUS.COMPLETED,
       stripePaymentIntentId: demoPaymentIntentId,
       paidAt: new Date(),
       notes: 'Pago confirmado en modo demo local por falta de llaves reales de Stripe.',
     });
     await sendReceiptIfEventOrder(order);
+    await generateOrderShippingLabelIfNeeded(order);
     return { clientSecret: `demo_${order._id}`, orderId: order._id, subtotal, tax, shippingCost, total };
   }
 
@@ -155,7 +263,8 @@ export const createPaymentIntent = async (
     metadata: { userId: user },
   });
   const order = await Order.create({
-    user, contact, items: normalizedItems, subtotal, tax, shippingCost, shipping: shipping ?? null, total,
+    user, contact, items: normalizedItems, subtotal, tax, shippingCost, shipping: shipping ?? null,
+    shippingCarrier, shippingService, total,
     status: ORDER_STATUS.PENDING,
     stripePaymentIntentId: intent.id,
   });
@@ -174,6 +283,10 @@ export const confirmPayment = async (paymentIntentId: string): Promise<IOrderDoc
   order.status = ORDER_STATUS.COMPLETED;
   order.paidAt = new Date();
   const saved = await order.save();
+  // La guia se genera antes del correo para que, si Envia responde a tiempo,
+  // el recibo ya incluya el numero de rastreo — generateOrderShippingLabelIfNeeded
+  // muta `saved` en el momento, no hace falta releer la orden.
+  await generateOrderShippingLabelIfNeeded(saved);
   await sendReceiptIfEventOrder(saved);
   return saved;
 };
