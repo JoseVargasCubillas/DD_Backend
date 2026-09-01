@@ -4,11 +4,22 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { apiRoutes } from './atomic/pages/routes/index.js';
 import { globalLimiter } from './atomic/molecules/middleware/rateLimit.middleware.js';
+import { isAllowedOrigin } from './config/allowed-origins.js';
 
 const app = express();
 
 app.use(helmet());
-app.use(cors({ origin: process.env.CLIENT_URL, credentials: true }));
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Sin header Origin (curl, apps móviles, server-to-server, health checks
+      // de la plataforma de hosting): se permite, no es una petición de navegador.
+      if (!origin || isAllowedOrigin(origin)) return callback(null, true);
+      callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+  }),
+);
 app.use(morgan('dev'));
 app.use(express.json({
   limit: '10mb',

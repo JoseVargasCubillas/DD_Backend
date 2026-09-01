@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { Lead, ILeadDocument, LeadSource } from '../../molecules/models/lead.model.js';
-import { env } from '../../../config/env.js';
+import { isAllowedOrigin } from '../../../config/allowed-origins.js';
 import {
   sendDownloadableResourceEmail,
   sendEstrategiaFiscalDossierEmail,
@@ -29,12 +29,7 @@ const normalizeEmail = (value: string): string => value.trim().toLowerCase();
 const isAllowedResourceUrl = (value: string): boolean => {
   try {
     const url = new URL(value);
-    const allowedOrigins = new Set([
-      new URL(env.clientUrl).origin,
-      'http://localhost:5173',
-      'http://127.0.0.1:5173',
-    ]);
-    return allowedOrigins.has(url.origin);
+    return isAllowedOrigin(url.origin);
   } catch {
     return false;
   }
