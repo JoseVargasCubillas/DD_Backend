@@ -383,7 +383,12 @@ export const toggleActive = async (id: string): Promise<IUserDocument> => {
 
 export const deleteUser = async (id: string, requestingUserId: string): Promise<{ id: string }> => {
   const user = await User.findById(id);
-  if (!user) throw makeError('User not found', 404);
+  // DELETE es idempotente: si ya no existe (doble clic, sesión de admin
+  // duplicada, lista del front desactualizada tras un borrado anterior), el
+  // resultado que el admin quería ya se cumplió — no es un error. Lanzar 404
+  // aquí es lo que producía el mensaje confuso "0 eliminados, N no se
+  // pudieron eliminar" para contactos que en realidad ya estaban borrados.
+  if (!user) return { id };
   if (user.role === 'admin') throw makeError('No se puede eliminar una cuenta de administrador', 400);
   if (String(id) === String(requestingUserId)) throw makeError('No puedes eliminarte a ti mismo', 400);
   await User.findByIdAndDelete(id);
