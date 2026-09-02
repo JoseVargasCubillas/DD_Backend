@@ -15,7 +15,7 @@ import {
 import { hashPassword, generateTempPassword } from '../../atoms/helpers/hash.helper.js';
 import { getShippingRate, getShippingRates, generateShippingLabel, ShippingPackage } from './shipping.service.js';
 import { findOfferByIdentity, isOfferActive } from './offer.service.js';
-import { getCheckoutUser, CheckoutCustomer } from './user.service.js';
+import { getCheckoutUser, CheckoutCustomer, markIncompleteAcademiaPayment, clearIncompleteAcademiaPayment } from './user.service.js';
 import { issueWhatsappInviteToken, buildWhatsappInviteUrl } from './whatsapp-invite.service.js';
 import Stripe from 'stripe';
 
@@ -308,6 +308,15 @@ export const createPaymentIntent = async (
     return { clientSecret: `demo_${order._id}`, orderId: order._id, subtotal, tax, shippingCost, total };
   }
 
+  // Deja rastro en el contacto de que llego al paso de pago de una oferta de
+  // Academia especifica, sin esperar a que el pago se confirme — asi un lead
+  // que abandona el checkout (o cuya tarjeta falla) no se ve como un lead
+  // vacio, se ve como "Pago incompleto: <oferta>". Se quita en
+  // grantAcademiaAccess si el pago si se confirma.
+  for (const item of normalizedItems.filter((i) => i.type === 'academia')) {
+    await markIncompleteAcademiaPayment(user, item.title);
+  }
+
   const intent = await stripe.paymentIntents.create({
     amount: Math.round(total * 100),
     currency: 'mxn',
@@ -417,6 +426,7 @@ const grantAcademiaAccess = async (order: IOrderDocument): Promise<void> => {
     if (!sub) continue;
 
     await User.findByIdAndUpdate(String(user._id), { contactStatus: 'customer', plan: item.plan || 'pro' });
+    await clearIncompleteAcademiaPayment(String(user._id), item.title);
 
     const payload = {
       orderId: String(order._id),

@@ -8,6 +8,12 @@ import { isAllowedOrigin } from './config/allowed-origins.js';
 
 const app = express();
 
+// nginx es el unico reverse proxy delante de este servidor (ver despliegue en
+// el VPS) — confiar solo en ese primer salto es lo que necesita
+// express-rate-limit para leer bien el X-Forwarded-For sin permitir que un
+// cliente falsifique su propia IP agregando saltos falsos al header.
+app.set('trust proxy', 1);
+
 app.use(helmet());
 app.use(
   cors({

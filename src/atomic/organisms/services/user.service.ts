@@ -131,6 +131,42 @@ const getOrCreateProductTag = async (productName: string): Promise<string> => {
   return tag._id;
 };
 
+const getOrCreateIncompletePaymentTag = async (offerTitle: string): Promise<string> => {
+  const name = `Pago incompleto: ${offerTitle}`.slice(0, 120);
+  const slug = `pago-incompleto-${slugifySegment(offerTitle) || 'oferta'}`;
+  const existing = await Tag.findOne({ slug });
+  if (existing) return existing._id;
+
+  const tag = await Tag.create({
+    name,
+    slug,
+    color: '#b45309',
+    description: 'Se marca sola al llegar al paso de pago y se quita sola al confirmarse la compra.',
+  });
+  return tag._id;
+};
+
+// Se marca al llegar al paso de pago de Academia (antes de confirmar el
+// cobro) — deja rastro en el contacto de que hubo un intento sobre esa oferta
+// especifica, sin esperar a que el pago se complete. Se quita en
+// grantAcademiaAccess si el pago si se confirma.
+export const markIncompleteAcademiaPayment = async (userId: string, offerTitle: string): Promise<void> => {
+  const [user, tagId] = await Promise.all([User.findById(userId), getOrCreateIncompletePaymentTag(offerTitle)]);
+  if (!user) return;
+  const next = new Set(user.tagIds ?? []);
+  if (next.has(tagId)) return;
+  next.add(tagId);
+  await User.findByIdAndUpdate(userId, { tagIds: Array.from(next) } as Partial<IUserDocument>);
+};
+
+export const clearIncompleteAcademiaPayment = async (userId: string, offerTitle: string): Promise<void> => {
+  const [user, tagId] = await Promise.all([User.findById(userId), getOrCreateIncompletePaymentTag(offerTitle)]);
+  if (!user || !(user.tagIds ?? []).includes(tagId)) return;
+  await User.findByIdAndUpdate(userId, {
+    tagIds: (user.tagIds ?? []).filter((id) => id !== tagId),
+  } as Partial<IUserDocument>);
+};
+
 export const getById = async (id: string): Promise<IUserDocument> => {
   const user = await User.findById(id).populate('enrolledCourses', 'title slug thumbnail category shortDescription');
   if (!user) throw makeError('User not found', 404);
