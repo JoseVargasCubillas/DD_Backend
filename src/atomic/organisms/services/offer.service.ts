@@ -203,7 +203,7 @@ export const getUserCourseAccess = async (userId: string): Promise<CourseAccess>
     } else {
       const academyCourses = await Course.find({});
       academyCourses
-        .filter((course) => course.status !== COURSE_STATUS.ARCHIVED)
+        .filter((course) => course.status === COURSE_STATUS.PUBLISHED)
         .forEach((course) => fullCourseIds.add(course._id));
     }
   }
