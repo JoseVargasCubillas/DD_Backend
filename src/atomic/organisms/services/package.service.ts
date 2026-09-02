@@ -71,14 +71,33 @@ export const assignPackageToUser = async (userId: string, packageId: string) => 
   const now = new Date();
   const periodEnd = getPackagePeriodEnd(pkg, now);
 
-  const sub = await Subscription.create({
+  // Si ya existe una suscripción activa para este usuario+paquete, la
+  // renovamos en lugar de crear una fila nueva (evita duplicados en
+  // "Clientes con suscripción activa" cuando el admin reasigna varias veces).
+  const existing = await Subscription.findOne({
     user: userId,
-    plan: pkg.slug,
+    packageId,
     status: 'active',
-    currentPeriodStart: now.toISOString(),
-    currentPeriodEnd: periodEnd.toISOString(),
-    cancelAtPeriodEnd: false,
-  } as any);
+  });
+
+  let sub;
+  if (existing) {
+    existing.currentPeriodStart = now.toISOString() as any;
+    existing.currentPeriodEnd = periodEnd.toISOString() as any;
+    existing.cancelAtPeriodEnd = false;
+    existing.plan = pkg.slug as any;
+    sub = await existing.save();
+  } else {
+    sub = await Subscription.create({
+      user: userId,
+      packageId,
+      plan: pkg.slug,
+      status: 'active',
+      currentPeriodStart: now.toISOString(),
+      currentPeriodEnd: periodEnd.toISOString(),
+      cancelAtPeriodEnd: false,
+    } as any);
+  }
 
   return { user, package: pkg, subscription: sub };
 };

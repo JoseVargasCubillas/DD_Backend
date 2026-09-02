@@ -32,8 +32,18 @@ export const getActiveSubscription = async (userId: string): Promise<ISubscripti
 export const listAllSubscriptions = async () => {
   const subs = await Subscription.find({ status: { $ne: SUBSCRIPTION_STATUS.INCOMPLETE } }).sort({ createdAt: -1 });
 
+  // Dedupe: si por bugs viejos hay múltiples filas para el mismo usuario+paquete+oferta,
+  // sólo mostramos la más reciente (ya viene ordenada por createdAt desc).
+  const seen = new Set<string>();
+  const unique = subs.filter((sub) => {
+    const key = `${String(sub.user)}::${sub.packageId ?? ''}::${sub.offerId ?? ''}::${sub.stripeSubscriptionId ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
   return Promise.all(
-    subs.map(async (sub) => {
+    unique.map(async (sub) => {
       const [user, offer, pkg] = await Promise.all([
         User.findById(String(sub.user)),
         sub.offerId ? findOfferByIdentity(String(sub.offerId)) : null,
