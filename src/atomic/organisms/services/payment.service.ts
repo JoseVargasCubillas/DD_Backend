@@ -451,7 +451,7 @@ const grantAcademiaAccess = async (order: IOrderDocument): Promise<void> => {
     // Solo aplica al primer pago: si ya tiene password, ya recibio su correo antes.
     if (isFirstPayment && !user.password) {
       const tempPassword = generateTempPassword();
-      await User.findByIdAndUpdate(String(user._id), { password: await hashPassword(tempPassword) });
+      await User.findByIdAndUpdate(String(user._id), { password: await hashPassword(tempPassword), mustChangePassword: true });
       emailsToSend.push(sendCredentials({ name: user.name, email: user.email }, tempPassword, { isNew: true }));
     }
 

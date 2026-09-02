@@ -168,5 +168,5 @@ export interface AuthTokens {
 }
 
 export interface AuthResult extends AuthTokens {
-  user: Pick<IUser, '_id' | 'name' | 'email' | 'role'>;
+  user: Pick<IUser, '_id' | 'name' | 'email' | 'role'> & { mustChangePassword?: boolean };
 }

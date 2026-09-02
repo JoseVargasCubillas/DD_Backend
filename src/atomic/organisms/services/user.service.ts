@@ -365,6 +365,7 @@ export const importContacts = async ({ contacts, productMappings, sendMigrationE
         lastLogin: contact.lastLogin || undefined,
         isActive: true,
         isEmailVerified: true,
+        mustChangePassword: true,
         notes: sendMigrationEmail
           ? (contact.sourceId ? `Migrado desde plataforma anterior. ID: ${contact.sourceId}` : 'Migrado desde plataforma anterior.')
           : (contact.sourceId ? `Importado desde Kajabi. ID: ${contact.sourceId}` : 'Importado desde Kajabi.'),
@@ -526,6 +527,7 @@ export const sendPasswordReset = async (userId: string) => {
 
   const tempPassword = generateTempPassword();
   user.password = await hashPassword(tempPassword);
+  (user as any).mustChangePassword = true;
   await user.save();
 
   try {

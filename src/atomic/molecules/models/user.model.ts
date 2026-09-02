@@ -23,6 +23,7 @@ export interface IUserDocument extends SqlDocumentMethods<IUserDocument> {
   emailVerifyToken?: string;
   resetPasswordToken?: string;
   resetPasswordExpires?: Date | string;
+  mustChangePassword?: boolean;
   lastLogin?: Date | string;
   createdAt: Date | string;
   updatedAt: Date | string;
@@ -45,5 +46,6 @@ export const User = createSqlModel<IUserDocument>({
     signInCount: 0,
     isActive: true,
     isEmailVerified: false,
+    mustChangePassword: false,
   }),
 });

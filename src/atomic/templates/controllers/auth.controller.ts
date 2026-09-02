@@ -82,3 +82,19 @@ export const adminCreateUser: RequestHandler = async (req, res) => {
     err.statusCode === 409 ? badRequest(res, err.message) : serverError(res, err);
   }
 };
+
+// Usuario autenticado cambia su propia contraseña.
+export const changePassword: RequestHandler = async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) { badRequest(res, errors.array()[0].msg as string); return; }
+  const authUser = (req as any).user as { _id?: string; id?: string } | undefined;
+  const userId = authUser?._id ?? authUser?.id;
+  if (!userId) { res.status(401).json({ success: false, message: 'No autenticado' }); return; }
+  const { currentPassword, newPassword } = req.body as { currentPassword: string; newPassword: string };
+  try {
+    await authService.changePassword({ userId, currentPassword, newPassword });
+    success(res, { message: 'Tu contraseña fue actualizada correctamente.' });
+  } catch (err: any) {
+    res.status(err.statusCode ?? 500).json({ success: false, message: err.message });
+  }
+};

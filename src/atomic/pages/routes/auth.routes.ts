@@ -5,6 +5,7 @@ import {
   loginValidator,
   forgotPasswordValidator,
   resetPasswordValidator,
+  changePasswordValidator,
 } from '../../atoms/validators/auth.validator.js';
 import { authLimiter } from '../../molecules/middleware/rateLimit.middleware.js';
 import { authenticate } from '../../molecules/middleware/auth.middleware.js';
@@ -16,6 +17,7 @@ router.post('/login', authLimiter, loginValidator, authController.login);
 router.post('/refresh', authController.refresh);
 router.post('/forgot-password', authLimiter, forgotPasswordValidator, authController.forgotPassword);
 router.post('/reset-password', authLimiter, resetPasswordValidator, authController.resetPassword);
+router.post('/change-password', authenticate, changePasswordValidator, authController.changePassword);
 router.get('/me', authenticate, authController.me);
 
 // Admin crea cuenta y envía credenciales por correo

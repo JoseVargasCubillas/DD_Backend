@@ -15,8 +15,8 @@ export const loginValidator = [
 ];
 
 export const changePasswordValidator = [
-  body('currentPassword').notEmpty(),
-  body('newPassword').isLength({ min: 8 }),
+  body('currentPassword').notEmpty().withMessage('La contraseña actual es requerida'),
+  body('newPassword').isLength({ min: 8 }).withMessage('La nueva contraseña debe tener al menos 8 caracteres'),
 ];
 
 export const forgotPasswordValidator = [

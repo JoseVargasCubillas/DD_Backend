@@ -13,6 +13,7 @@ const hashToken = (token: string): string => crypto.createHash('sha256').update(
 
 interface RegisterInput { name: string; email: string; password: string }
 interface LoginInput { email: string; password: string }
+interface ChangePasswordInput { userId: string; currentPassword: string; newPassword: string }
 interface AdminCreateUserInput {
   name: string;
   email: string;
@@ -47,7 +48,13 @@ export const login = async ({ email, password }: LoginInput): Promise<AuthResult
   await user.save();
 
   return {
-    user: { _id: String(user._id), name: user.name, email: user.email, role: user.role as any },
+    user: {
+      _id: String(user._id),
+      name: user.name,
+      email: user.email,
+      role: user.role as any,
+      mustChangePassword: Boolean((user as any).mustChangePassword),
+    },
     accessToken: signAccessToken({ id: String(user._id), role: user.role }),
     refreshToken: signRefreshToken({ id: String(user._id) }),
   };
@@ -101,6 +108,7 @@ export const adminCreateUser = async ({
     marketingStatus,
     isActive: true,
     isEmailVerified: true,
+    mustChangePassword: true,
   });
 
   // Envío de correo (best effort — no romper la creación si SMTP falla).
@@ -154,5 +162,24 @@ export const resetPassword = async ({ token, email, password }: ResetPasswordInp
   user.password = await hashPassword(password);
   user.resetPasswordToken = undefined;
   user.resetPasswordExpires = undefined;
+  (user as any).mustChangePassword = false;
+  await user.save();
+};
+
+/**
+ * Cambio de contraseña del usuario autenticado. Requiere la contraseña actual
+ * y una nueva. Limpia el flag mustChangePassword para que ya no se le pida.
+ */
+export const changePassword = async ({ userId, currentPassword, newPassword }: ChangePasswordInput): Promise<void> => {
+  const user = await User.findById(userId).select('+password');
+  if (!user) throw makeError('Usuario no encontrado', 404);
+  if (!(await comparePassword(currentPassword, user.password))) {
+    throw makeError('La contraseña actual no es correcta', 400);
+  }
+  if (currentPassword === newPassword) {
+    throw makeError('La nueva contraseña debe ser diferente a la actual', 400);
+  }
+  user.password = await hashPassword(newPassword);
+  (user as any).mustChangePassword = false;
   await user.save();
 };
