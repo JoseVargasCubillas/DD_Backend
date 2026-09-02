@@ -24,9 +24,41 @@ export const normalizeCustomer = (customer?: CheckoutCustomer): Required<Checkou
   return { name, email, phone };
 };
 
-// Busca o crea la cuenta real que necesita un checkout con acceso a cursos
-// (Academia) — a diferencia del checkout de invitado de libros/eventos, que
-// solo guarda un IOrderContact y nunca crea User.
+// Ultimos 10 digitos, sin importar formato/espacios/guiones/codigo de pais —
+// para comparar telefonos aunque cambie el formato (con o sin +52, con
+// espacios, etc).
+const normalizePhoneDigits = (phone: string): string => String(phone || '').replace(/\D/g, '').slice(-10);
+
+// El correo es el UNICO criterio para reutilizar una cuenta — es el
+// identificador real. El telefono se puede repetir sin ser la misma persona
+// (telefono compartido, fijo de casa, error de captura); fusionar cuentas por
+// eso arriesgaba mezclar a dos personas distintas y perder el correo real de
+// una de ellas. Ver flagPossiblePhoneDuplicate para lo que si se hace con una
+// coincidencia de telefono: avisar, nunca fusionar solo.
+const findExistingCheckoutUser = async (email: string): Promise<IUserDocument | null> => User.findOne({ email });
+
+// Best-effort, no bloquea el checkout si falla: si el telefono de una cuenta
+// recien creada coincide con el de otra cuenta distinta, deja una nota
+// visible en el admin para que alguien lo revise y decida a mano si de verdad
+// es la misma persona — nunca fusiona ni sobreescribe nada automaticamente.
+const flagPossiblePhoneDuplicate = async (newUser: IUserDocument, phone: string): Promise<void> => {
+  const targetPhone = normalizePhoneDigits(phone);
+  if (!targetPhone) return;
+  const all = await User.find({});
+  const other = all.find(
+    (u) => String(u._id) !== String(newUser._id) && normalizePhoneDigits(u.phone || '') === targetPhone,
+  );
+  if (!other) return;
+
+  const note = `Posible duplicado: mismo teléfono que ${other.email || 'otra cuenta'} (id ${other._id}). Revisar y fusionar a mano si es la misma persona.`;
+  await User.findByIdAndUpdate(String(newUser._id), {
+    notes: [newUser.notes, note].filter(Boolean).join('\n'),
+  } as Partial<IUserDocument>);
+};
+
+// Busca o crea la cuenta real que necesita un checkout sin sesion iniciada
+// (Academia, libros, eventos) — a diferencia del guest checkout viejo, que
+// solo guardaba un IOrderContact y nunca creaba User.
 export const getCheckoutUser = async (userId?: string, customer?: CheckoutCustomer): Promise<IUserDocument> => {
   if (userId) {
     const user = await User.findById(userId);
@@ -42,7 +74,7 @@ export const getCheckoutUser = async (userId?: string, customer?: CheckoutCustom
   }
 
   const normalized = normalizeCustomer(customer);
-  const existing = await User.findOne({ email: normalized.email });
+  const existing = await findExistingCheckoutUser(normalized.email);
   if (existing) {
     existing.name = normalized.name;
     existing.phone = normalized.phone;
@@ -52,21 +84,24 @@ export const getCheckoutUser = async (userId?: string, customer?: CheckoutCustom
   }
 
   // Password vacia: no es utilizable para iniciar sesion hasta que el pago se
-  // confirme (ver grantAcademiaAccess en payment.service.ts), que es cuando
-  // se genera la contrasena temporal real y se manda por correo.
-  return User.create({
+  // confirme (ver grantAcademiaAccess/confirmPayment en payment.service.ts),
+  // que es cuando se genera la contrasena temporal real y se manda por correo.
+  const created = await User.create({
     name: normalized.name,
     email: normalized.email,
     phone: normalized.phone,
     password: '',
     role: 'user',
     plan: 'guest',
-    notes: 'Cliente registrado desde checkout publico de Academia.',
+    notes: 'Cliente registrado desde checkout publico sin sesion iniciada.',
     contactStatus: 'lead',
     marketingStatus: 'subscribed',
     isActive: true,
     isEmailVerified: false,
   } as Partial<IUserDocument>);
+
+  await flagPossiblePhoneDuplicate(created, normalized.phone);
+  return created;
 };
 
 interface ListParams { page?: number; limit?: number; search?: string; tagId?: string; role?: string; sort?: string; segment?: string }
@@ -131,9 +166,9 @@ const getOrCreateProductTag = async (productName: string): Promise<string> => {
   return tag._id;
 };
 
-const getOrCreateIncompletePaymentTag = async (offerTitle: string): Promise<string> => {
-  const name = `Pago incompleto: ${offerTitle}`.slice(0, 120);
-  const slug = `pago-incompleto-${slugifySegment(offerTitle) || 'oferta'}`;
+const getOrCreateIncompletePaymentTag = async (itemTitle: string): Promise<string> => {
+  const name = `Pago incompleto: ${itemTitle}`.slice(0, 120);
+  const slug = `pago-incompleto-${slugifySegment(itemTitle) || 'item'}`;
   const existing = await Tag.findOne({ slug });
   if (existing) return existing._id;
 
@@ -146,12 +181,12 @@ const getOrCreateIncompletePaymentTag = async (offerTitle: string): Promise<stri
   return tag._id;
 };
 
-// Se marca al llegar al paso de pago de Academia (antes de confirmar el
-// cobro) — deja rastro en el contacto de que hubo un intento sobre esa oferta
-// especifica, sin esperar a que el pago se complete. Se quita en
-// grantAcademiaAccess si el pago si se confirma.
-export const markIncompleteAcademiaPayment = async (userId: string, offerTitle: string): Promise<void> => {
-  const [user, tagId] = await Promise.all([User.findById(userId), getOrCreateIncompletePaymentTag(offerTitle)]);
+// Se marca al llegar al paso de pago (Academia, libro o evento) — antes de
+// confirmar el cobro — deja rastro en el contacto de que hubo un intento
+// sobre ese producto/oferta especifico, sin esperar a que el pago se
+// complete. Se quita en confirmPayment si el pago si se confirma.
+export const markIncompletePayment = async (userId: string, itemTitle: string): Promise<void> => {
+  const [user, tagId] = await Promise.all([User.findById(userId), getOrCreateIncompletePaymentTag(itemTitle)]);
   if (!user) return;
   const next = new Set(user.tagIds ?? []);
   if (next.has(tagId)) return;
@@ -159,8 +194,8 @@ export const markIncompleteAcademiaPayment = async (userId: string, offerTitle: 
   await User.findByIdAndUpdate(userId, { tagIds: Array.from(next) } as Partial<IUserDocument>);
 };
 
-export const clearIncompleteAcademiaPayment = async (userId: string, offerTitle: string): Promise<void> => {
-  const [user, tagId] = await Promise.all([User.findById(userId), getOrCreateIncompletePaymentTag(offerTitle)]);
+export const clearIncompletePayment = async (userId: string, itemTitle: string): Promise<void> => {
+  const [user, tagId] = await Promise.all([User.findById(userId), getOrCreateIncompletePaymentTag(itemTitle)]);
   if (!user || !(user.tagIds ?? []).includes(tagId)) return;
   await User.findByIdAndUpdate(userId, {
     tagIds: (user.tagIds ?? []).filter((id) => id !== tagId),

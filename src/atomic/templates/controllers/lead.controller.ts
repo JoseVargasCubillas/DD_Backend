@@ -6,10 +6,11 @@ export const requestSatGuide: RequestHandler = async (req, res) => {
   try {
     const email = String(req.body?.email ?? '').trim();
     const name = req.body?.name ? String(req.body.name).trim() : undefined;
+    const phone = req.body?.phone ? String(req.body.phone).trim() : undefined;
 
     if (!email) return badRequest(res, 'El correo es requerido.');
 
-    const lead = await leadService.sendSatGuide({ email, name });
+    const lead = await leadService.sendSatGuide({ email, name, phone });
     return created(res, {
       email: lead.email,
       source: lead.source,
@@ -25,10 +26,11 @@ export const requestMediaKit: RequestHandler = async (req, res) => {
   try {
     const email = String(req.body?.email ?? '').trim();
     const name = req.body?.name ? String(req.body.name).trim() : undefined;
+    const phone = req.body?.phone ? String(req.body.phone).trim() : undefined;
 
     if (!email) return badRequest(res, 'El correo es requerido.');
 
-    const lead = await leadService.sendMediaKit({ email, name });
+    const lead = await leadService.sendMediaKit({ email, name, phone });
     return created(res, {
       email: lead.email,
       source: lead.source,
@@ -127,10 +129,11 @@ export const subscribeSatWaitlist: RequestHandler = async (req, res) => {
   try {
     const email = String(req.body?.email ?? '').trim();
     const name = req.body?.name ? String(req.body.name).trim() : undefined;
+    const phone = req.body?.phone ? String(req.body.phone).trim() : undefined;
 
     if (!email) return badRequest(res, 'El correo es requerido.');
 
-    const lead = await leadService.subscribeSatWaitlist({ email, name });
+    const lead = await leadService.subscribeSatWaitlist({ email, name, phone });
     return created(res, {
       email: lead.email,
       source: lead.source,
@@ -145,7 +148,17 @@ export const subscribeSatWaitlist: RequestHandler = async (req, res) => {
 export const list: RequestHandler = async (req, res) => {
   try {
     const source = req.query.source ? String(req.query.source) : undefined;
-    const leads = await leadService.listLeads(source as any);
+    const email = req.query.email ? String(req.query.email) : undefined;
+    const leads = await leadService.listLeads(source as any, email);
+    return success(res, leads);
+  } catch (err: any) {
+    return serverError(res, err);
+  }
+};
+
+export const listUnified: RequestHandler = async (_req, res) => {
+  try {
+    const leads = await leadService.listUnifiedLeads();
     return success(res, leads);
   } catch (err: any) {
     return serverError(res, err);

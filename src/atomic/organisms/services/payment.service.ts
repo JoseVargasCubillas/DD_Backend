@@ -15,7 +15,7 @@ import {
 import { hashPassword, generateTempPassword } from '../../atoms/helpers/hash.helper.js';
 import { getShippingRate, getShippingRates, generateShippingLabel, ShippingPackage } from './shipping.service.js';
 import { findOfferByIdentity, isOfferActive } from './offer.service.js';
-import { getCheckoutUser, CheckoutCustomer, markIncompleteAcademiaPayment, clearIncompleteAcademiaPayment } from './user.service.js';
+import { getCheckoutUser, CheckoutCustomer, markIncompletePayment, clearIncompletePayment } from './user.service.js';
 import { issueWhatsappInviteToken, buildWhatsappInviteUrl } from './whatsapp-invite.service.js';
 import Stripe from 'stripe';
 
@@ -36,6 +36,11 @@ interface OrderItemInput {
 interface CheckoutContactInput { name?: string; email?: string; phone?: string }
 interface ShippingSelectionInput { carrier?: string; service?: string }
 const ACADEMIA_ACCESS_TYPES = new Set(['academia', 'offer']);
+// Todo lo que se puede comprar sin sesion iniciada — cada uno crea/reutiliza
+// una cuenta real (ver getCheckoutUser) en vez del guest-checkout viejo que
+// solo guardaba un IOrderContact, para que el tag de "pago incompleto" y el
+// resto del CRM tengan a quien colgarsele.
+const GUEST_ACCOUNT_TYPES = new Set(['academia', 'offer', 'event', 'product']);
 
 const makeError = (msg: string, code: number): Error => Object.assign(new Error(msg), { statusCode: code });
 const ANNUAL_ACCESS_DAYS = 365;
@@ -128,24 +133,13 @@ const normalizeOrderItems = async (items: OrderItemInput[]): Promise<OrderItemIn
   );
 };
 
-const normalizeGuestContact = (contact?: CheckoutContactInput): IOrderContact => {
-  const name = String(contact?.name || '').trim();
-  const email = String(contact?.email || '').trim().toLowerCase();
-  const phone = String(contact?.phone || '').trim();
-  if (name.length < 2) throw makeError('Nombre requerido', 400);
-  if (!/\S+@\S+\.\S+/.test(email)) throw makeError('Correo requerido', 400);
-  if (phone.length < 10) throw makeError('Celular requerido', 400);
-  return { name, email, phone };
-};
-
-// Tickets de evento y libros nunca requieren cuenta: si hay sesion iniciada
-// se usa (para que la compra aparezca en "Mis pedidos"), si no, se guarda
-// solo el contacto (nombre + correo + telefono) en la orden para poder
-// mandar el recibo. Academia si requiere una cuenta real (busca-o-crea por
-// correo) porque el acceso a cursos se resuelve contra un userId.
+// Libros, eventos y Academia comprados sin sesion iniciada buscan-o-crean una
+// cuenta real (ver getCheckoutUser) en vez del guest-checkout viejo que solo
+// guardaba un IOrderContact — asi la compra aparece en "Mis pedidos" si esa
+// persona despues inicia sesion, y el CRM (tags, contactStatus) tiene una
+// cuenta real a la que colgarsele desde el primer intento de pago.
 const resolveOrderOwner = async (
   userId: string | undefined,
-  allowsGuestCheckout: boolean,
   customer: CheckoutContactInput | undefined,
   requiresAccount: boolean,
 ): Promise<{ user: string; contact: IOrderContact | null }> => {
@@ -154,7 +148,6 @@ const resolveOrderOwner = async (
     return { user: String(user._id), contact: null };
   }
   if (userId) return { user: userId, contact: null };
-  if (allowsGuestCheckout) return { user: '', contact: normalizeGuestContact(customer) };
   throw makeError('Inicia sesión para continuar', 401);
 };
 
@@ -264,11 +257,8 @@ export const createPaymentIntent = async (
   shippingSelection?: ShippingSelectionInput,
 ) => {
   const normalizedItems = await normalizeOrderItems(items);
-  const allowsGuestCheckout = normalizedItems.every(
-    (i) => i.type === 'event' || i.type === 'product' || i.type === 'academia',
-  );
-  const requiresAccount = normalizedItems.some((i) => i.type === 'academia');
-  const { user, contact } = await resolveOrderOwner(userId, allowsGuestCheckout, customer, requiresAccount);
+  const requiresAccount = normalizedItems.some((i) => GUEST_ACCOUNT_TYPES.has(i.type));
+  const { user, contact } = await resolveOrderOwner(userId, customer, requiresAccount);
   const subtotal = normalizedItems.reduce((sum, i) => sum + i.price * (i.quantity ?? 1), 0);
   const requiresShipping = Boolean(shipping) || normalizedItems.some((i) => i.type === 'product');
 
@@ -292,6 +282,16 @@ export const createPaymentIntent = async (
   const tax = 0;
   const total = subtotal + tax;
 
+  // Deja rastro en el contacto de que llego al paso de pago de un producto/
+  // oferta especifico, sin esperar a que el pago se confirme — asi un lead
+  // que abandona el checkout (o cuya tarjeta falla) no se ve como un lead
+  // vacio, se ve como "Pago incompleto: <item>". Se quita en confirmPayment
+  // (o abajo mismo en modo demo) si el pago si se confirma.
+  const guestAccountItems = normalizedItems.filter((i) => GUEST_ACCOUNT_TYPES.has(i.type));
+  for (const item of guestAccountItems) {
+    await markIncompletePayment(user, item.title);
+  }
+
   if (!isStripeConfigured()) {
     const demoPaymentIntentId = `demo_pi_${Date.now()}`;
     const order = await Order.create({
@@ -305,16 +305,9 @@ export const createPaymentIntent = async (
     await sendReceiptIfEventOrder(order);
     await generateOrderShippingLabelIfNeeded(order);
     await grantAcademiaAccess(order);
+    if (user) await User.findByIdAndUpdate(user, { contactStatus: 'customer' } as Partial<IUserDocument>);
+    for (const item of guestAccountItems) await clearIncompletePayment(user, item.title);
     return { clientSecret: `demo_${order._id}`, orderId: order._id, subtotal, tax, shippingCost, total };
-  }
-
-  // Deja rastro en el contacto de que llego al paso de pago de una oferta de
-  // Academia especifica, sin esperar a que el pago se confirme — asi un lead
-  // que abandona el checkout (o cuya tarjeta falla) no se ve como un lead
-  // vacio, se ve como "Pago incompleto: <oferta>". Se quita en
-  // grantAcademiaAccess si el pago si se confirma.
-  for (const item of normalizedItems.filter((i) => i.type === 'academia')) {
-    await markIncompleteAcademiaPayment(user, item.title);
   }
 
   const intent = await stripe.paymentIntents.create({
@@ -349,6 +342,15 @@ export const confirmPayment = async (paymentIntentId: string): Promise<IOrderDoc
   await generateOrderShippingLabelIfNeeded(saved);
   await sendReceiptIfEventOrder(saved);
   await grantAcademiaAccess(saved);
+  if (saved.user) {
+    // grantAcademiaAccess ya marca 'customer' para ofertas de Academia — este
+    // flip cubre libros/eventos, que no pasan por ahi pero igual ahora tienen
+    // una cuenta real (ver resolveOrderOwner) y deben dejar de verse como lead.
+    await User.findByIdAndUpdate(saved.user, { contactStatus: 'customer' } as Partial<IUserDocument>);
+    for (const item of saved.items.filter((i) => GUEST_ACCOUNT_TYPES.has(i.type))) {
+      await clearIncompletePayment(saved.user, item.title);
+    }
+  }
   return saved;
 };
 
@@ -426,7 +428,6 @@ const grantAcademiaAccess = async (order: IOrderDocument): Promise<void> => {
     if (!sub) continue;
 
     await User.findByIdAndUpdate(String(user._id), { contactStatus: 'customer', plan: item.plan || 'pro' });
-    await clearIncompleteAcademiaPayment(String(user._id), item.title);
 
     const payload = {
       orderId: String(order._id),

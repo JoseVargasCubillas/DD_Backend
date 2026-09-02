@@ -1,6 +1,8 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { Lead, ILeadDocument, LeadSource } from '../../molecules/models/lead.model.js';
+import { User } from '../../molecules/models/user.model.js';
+import { Tag } from '../../molecules/models/tag.model.js';
 import { isAllowedOrigin } from '../../../config/allowed-origins.js';
 import {
   sendDownloadableResourceEmail,
@@ -77,10 +79,19 @@ export const captureLead = async (input: {
 export const sendSatGuide = async (input: {
   email: string;
   name?: string;
+  phone?: string;
 }): Promise<ILeadDocument> => {
+  const phone = input.phone?.trim();
+  if (!phone) {
+    const err: any = new Error('El número de teléfono es requerido.');
+    err.statusCode = 400;
+    throw err;
+  }
+
   const lead = await captureLead({
     email: input.email,
     name: input.name,
+    phone,
     source: 'guia-blindaje-sat',
     meta: { deliveredResource: GUIDE_FILENAME },
   });
@@ -107,12 +118,21 @@ export const sendSatGuide = async (input: {
 export const sendMediaKit = async (input: {
   email: string;
   name?: string;
+  phone?: string;
 }): Promise<ILeadDocument> => {
+  const phone = input.phone?.trim();
+  if (!phone) {
+    const err: any = new Error('El número de teléfono es requerido.');
+    err.statusCode = 400;
+    throw err;
+  }
+
   const downloadUrl = MEDIA_KIT_URL;
 
   const lead = await captureLead({
     email: input.email,
     name: input.name,
+    phone,
     source: 'media-kit',
     meta: { deliveredResource: 'DDMedia-Kit.pdf', downloadUrl },
   });
@@ -193,10 +213,17 @@ export const sendDownloadableResource = async (input: {
     throw err;
   }
 
+  const phone = input.phone?.trim();
+  if (!phone) {
+    const err: any = new Error('El número de teléfono es requerido.');
+    err.statusCode = 400;
+    throw err;
+  }
+
   const lead = await captureLead({
     email: input.email,
     name: input.name,
-    phone: input.phone,
+    phone,
     source: 'centro-recursos',
     meta: {
       deliveredResource: resourceTitle,
@@ -238,21 +265,143 @@ export const subscribeNewsletter = async (input: {
 export const subscribeSatWaitlist = async (input: {
   email: string;
   name?: string;
+  phone?: string;
 }): Promise<ILeadDocument> => {
+  const phone = input.phone?.trim();
+  if (!phone) {
+    const err: any = new Error('El número de teléfono es requerido.');
+    err.statusCode = 400;
+    throw err;
+  }
+
   return captureLead({
     email: input.email,
     name: input.name,
+    phone,
     source: 'libro-sat-waitlist',
     meta: { deliveredResource: 'Capítulo 1 · Los 7 secretos que el SAT no quiere que conozcas' },
   });
 };
 
-export const listLeads = async (source?: LeadSource): Promise<ILeadDocument[]> => {
-  const filter = source ? { source } : {};
+export const listLeads = async (source?: LeadSource, email?: string): Promise<ILeadDocument[]> => {
+  const filter: Record<string, unknown> = {};
+  if (source) filter.source = source;
+  if (email) filter.email = normalizeEmail(email);
   const leads = await Lead.find(filter);
   return leads.sort(
     (a, b) => new Date(String(b.createdAt)).getTime() - new Date(String(a.createdAt)).getTime(),
   );
+};
+
+export interface UnifiedLead {
+  id: string;
+  email: string;
+  name: string;
+  phone?: string;
+  sources: string[];
+  reasons: string[];
+  userId?: string;
+  leadIds: string[];
+  firstSeenAt: string;
+  lastActivityAt: string;
+}
+
+const LEAD_REASON_LABELS: Record<string, string> = {
+  'guia-blindaje-sat': 'Guía SAT',
+  'media-kit': 'Media Kit',
+  newsletter: 'Newsletter',
+  'centro-recursos': 'Centro de recursos',
+  'estrategia-fiscal-dossier': 'Dossier Estrategia Fiscal',
+  'libro-sat-waitlist': 'Lista de espera · Libro SAT',
+  contact: 'Formulario de contacto',
+  other: 'Otro',
+};
+
+const INCOMPLETE_PAYMENT_TAG_PREFIX = 'Pago incompleto: ';
+
+// Une la tabla `leads` (newsletter/media-kit/guias) con los usuarios que
+// nunca completaron una compra (contactStatus 'lead' — incluye a quien tiene
+// el tag "Pago incompleto: X" de markIncompletePayment en user.service.ts, y
+// a cualquier registro sin ese tag). Se excluye a quien ya sea cliente,
+// aunque tenga historial viejo en `leads` — al pagar, confirmPayment/
+// grantAcademiaAccess ya lo pasan a contactStatus 'customer'.
+export const listUnifiedLeads = async (): Promise<UnifiedLead[]> => {
+  const [leads, users, tags] = await Promise.all([Lead.find({}), User.find({}), Tag.find({})]);
+  const tagNameById = new Map(tags.map((tag) => [String(tag._id), tag.name]));
+  const userByEmail = new Map(users.map((user) => [normalizeEmail(user.email || ''), user]));
+
+  const merged = new Map<string, UnifiedLead>();
+
+  const touch = (
+    email: string,
+    name: string,
+    phone: string | undefined,
+    source: string,
+    reason: string,
+    at: string,
+    leadId?: string,
+    userId?: string,
+  ): void => {
+    if (!email) return;
+    const existing = merged.get(email);
+    if (existing) {
+      if (!existing.sources.includes(source)) existing.sources.push(source);
+      if (!existing.reasons.includes(reason)) existing.reasons.push(reason);
+      if (name && !existing.name) existing.name = name;
+      if (phone && !existing.phone) existing.phone = phone;
+      if (leadId) existing.leadIds.push(leadId);
+      if (userId) existing.userId = userId;
+      if (at < existing.firstSeenAt) existing.firstSeenAt = at;
+      if (at > existing.lastActivityAt) existing.lastActivityAt = at;
+      return;
+    }
+    merged.set(email, {
+      id: userId ? `user:${userId}` : `lead:${leadId}`,
+      email,
+      name: name || '',
+      phone,
+      sources: [source],
+      reasons: [reason],
+      userId,
+      leadIds: leadId ? [leadId] : [],
+      firstSeenAt: at,
+      lastActivityAt: at,
+    });
+  };
+
+  for (const lead of leads) {
+    const email = normalizeEmail(lead.email);
+    const at = String(lead.createdAt);
+    const reason = LEAD_REASON_LABELS[lead.source] ?? lead.source;
+    touch(email, lead.name || '', lead.phone, lead.source, reason, at, String(lead._id));
+  }
+
+  for (const user of users) {
+    if (user.contactStatus !== 'lead') continue;
+    const email = normalizeEmail(user.email || '');
+    if (!email) continue;
+    const at = String(user.createdAt);
+
+    const incompleteTagNames = (user.tagIds ?? [])
+      .map((tagId) => tagNameById.get(tagId))
+      .filter((name): name is string => Boolean(name && name.startsWith(INCOMPLETE_PAYMENT_TAG_PREFIX)));
+
+    if (incompleteTagNames.length) {
+      for (const tagName of incompleteTagNames) {
+        const reason = `Intento de compra: ${tagName.slice(INCOMPLETE_PAYMENT_TAG_PREFIX.length)}`;
+        touch(email, user.name || '', user.phone, 'compra-incompleta', reason, at, undefined, String(user._id));
+      }
+    } else {
+      touch(email, user.name || '', user.phone, 'compra-incompleta', 'Registro sin compra completada', at, undefined, String(user._id));
+    }
+  }
+
+  const result = Array.from(merged.values()).filter((entry) => {
+    const user = userByEmail.get(entry.email);
+    return !user || user.contactStatus !== 'customer';
+  });
+
+  return result.sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime());
 };
 
 export const deleteLead = async (id: string): Promise<ILeadDocument | null> => {
