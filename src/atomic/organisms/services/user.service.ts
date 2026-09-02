@@ -410,7 +410,7 @@ export const importContacts = async ({ contacts, productMappings, sendMigrationE
         plan: product,
         status: 'active',
         currentPeriodStart: new Date().toISOString(),
-        currentPeriodEnd: new Date(Date.now() + 100 * 365 * 86400000).toISOString(),
+        currentPeriodEnd: new Date(Date.now() + 365 * 86400000).toISOString(),
         cancelAtPeriodEnd: false,
       } as any);
     }
