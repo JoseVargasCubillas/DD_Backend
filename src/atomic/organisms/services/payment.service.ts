@@ -201,6 +201,11 @@ const buildShippingPackages = (items: OrderItemInput[]): ShippingPackage[] => {
 // quedaban sin ningun correo de confirmacion — se resuelve el destinatario
 // contra el User cuando no hay contact de invitado.
 const sendReceiptIfEventOrder = async (order: IOrderDocument): Promise<void> => {
+  // Las ofertas de Academia ya mandan su propio recibo en grantAcademiaAccess
+  // (sendAcademiaOrderReceipt) — si tambien se manda este generico, el cliente
+  // recibe dos correos de "pago confirmado" para la misma compra.
+  if (order.items.length > 0 && order.items.every((item) => item.type === 'academia')) return;
+
   const recipient = order.contact
     ? { name: order.contact.name, email: order.contact.email }
     : order.user
