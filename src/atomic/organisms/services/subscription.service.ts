@@ -50,10 +50,12 @@ export const listAllSubscriptions = async () => {
         sub.packageId ? Package.findById(String(sub.packageId)) : null,
       ]);
 
-      // offerId presente = compra pagada de Academia (Order de un solo pago,
-      // renovacion manual). Sin offerId ni stripeSubscriptionId = acceso
-      // otorgado a mano por un admin (assignPackageToUser / importacion).
-      const source = sub.offerId ? 'order' : sub.stripeSubscriptionId ? 'stripe' : 'manual_admin';
+      // orderId presente = compra pagada de Academia (Order de un solo pago,
+      // ver grantAcademiaAccess, que siempre setea offerId+orderId juntos).
+      // offerId solo (sin orderId) es acceso otorgado a mano directo en la
+      // fila de Subscription, sin pasar por un Order real — no es un pago
+      // aunque tenga offerId, a diferencia de lo que asumia esta funcion antes.
+      const source = sub.orderId ? 'order' : sub.stripeSubscriptionId ? 'stripe' : 'manual_admin';
 
       return {
         _id: sub._id,
