@@ -11,6 +11,7 @@ import {
   sendAcademiaOrderReceipt,
   sendCredentials,
   sendEventOrderReceipt,
+  sendOrderAdminNotice,
 } from './email.service.js';
 import { hashPassword, generateTempPassword } from '../../atoms/helpers/hash.helper.js';
 import { getShippingRate, getShippingRates, generateShippingLabel, ShippingPackage } from './shipping.service.js';
@@ -201,22 +202,41 @@ const buildShippingPackages = (items: OrderItemInput[]): ShippingPackage[] => {
 // quedaban sin ningun correo de confirmacion — se resuelve el destinatario
 // contra el User cuando no hay contact de invitado.
 const sendReceiptIfEventOrder = async (order: IOrderDocument): Promise<void> => {
-  // Las ofertas de Academia ya mandan su propio recibo en grantAcademiaAccess
-  // (sendAcademiaOrderReceipt) — si tambien se manda este generico, el cliente
-  // recibe dos correos de "pago confirmado" para la misma compra.
+  // Las ofertas de Academia ya mandan su propio recibo y aviso a TI en
+  // grantAcademiaAccess (sendAcademiaOrderReceipt/sendAcademiaOrderNotice) —
+  // si tambien se manda esto, se duplican ambos correos para la misma compra.
   if (order.items.length > 0 && order.items.every((item) => item.type === 'academia')) return;
 
+  const user = !order.contact && order.user ? await User.findById(order.user) : null;
   const recipient = order.contact
-    ? { name: order.contact.name, email: order.contact.email }
-    : order.user
-      ? await User.findById(order.user).then((user) => (user?.email ? { name: user.name || 'Cliente', email: user.email } : null))
+    ? { name: order.contact.name, email: order.contact.email, phone: order.contact.phone }
+    : user?.email
+      ? { name: user.name || 'Cliente', email: user.email, phone: user.phone || '' }
       : null;
-  if (!recipient) return;
 
+  if (recipient) {
+    try {
+      await sendEventOrderReceipt({ name: recipient.name, email: recipient.email, order });
+    } catch (err) {
+      console.warn('[sendReceiptIfEventOrder] failed:', (err as Error).message);
+    }
+  }
+
+  // Aviso a TI de cualquier compra que no sea de Academia (libros, eventos,
+  // cursos sueltos) — se manda por separado del recibo del cliente para que
+  // una falla en uno no bloquee al otro.
   try {
-    await sendEventOrderReceipt({ name: recipient.name, email: recipient.email, order });
+    await sendOrderAdminNotice({
+      orderId: String(order._id),
+      customerName: recipient?.name || 'Cliente',
+      customerEmail: recipient?.email || 'Sin correo',
+      customerPhone: recipient?.phone || '',
+      itemsTitle: order.items.map((item) => item.title).join(', ') || 'Compra',
+      amountPaid: order.total,
+      receiptUrl: `${env.clientUrl}/recibo/pedido/${order._id}`,
+    });
   } catch (err) {
-    console.warn('[sendReceiptIfEventOrder] failed:', (err as Error).message);
+    console.warn('[sendOrderAdminNotice] failed:', (err as Error).message);
   }
 };
 
@@ -448,7 +468,22 @@ const grantAcademiaAccess = async (order: IOrderDocument): Promise<void> => {
       whatsappJoinUrl: whatsappInviteToken ? buildWhatsappInviteUrl(whatsappInviteToken) : undefined,
     };
 
-    const emailsToSend = [sendAcademiaOrderNotice(payload), sendAcademiaOrderReceipt(payload)];
+    // Cada correo se envia por separado (no Promise.all directo sobre las
+    // promesas) para que la falla de uno (ej. el aviso a TI) no tumbe a los
+    // demas ni quede sin rastro — antes una excepcion aqui se propagaba sin
+    // capturar hasta el webhook, que solo la logueaba con console.error.
+    const notify = async (label: string, promise: Promise<unknown>): Promise<void> => {
+      try {
+        await promise;
+      } catch (err) {
+        console.warn(`[grantAcademiaAccess:${label}] email failed:`, (err as Error).message);
+      }
+    };
+
+    const emailsToSend = [
+      notify('adminNotice', sendAcademiaOrderNotice(payload)),
+      notify('receipt', sendAcademiaOrderReceipt(payload)),
+    ];
 
     // Cuentas de invitado se crean sin password utilizable (ver getCheckoutUser
     // en user.service.ts). Aqui, ya con el pago confirmado, se genera la
@@ -457,7 +492,7 @@ const grantAcademiaAccess = async (order: IOrderDocument): Promise<void> => {
     if (isFirstPayment && !user.password) {
       const tempPassword = generateTempPassword();
       await User.findByIdAndUpdate(String(user._id), { password: await hashPassword(tempPassword), mustChangePassword: true });
-      emailsToSend.push(sendCredentials({ name: user.name, email: user.email }, tempPassword, { isNew: true }));
+      emailsToSend.push(notify('credentials', sendCredentials({ name: user.name, email: user.email }, tempPassword, { isNew: true })));
     }
 
     await Promise.all(emailsToSend);

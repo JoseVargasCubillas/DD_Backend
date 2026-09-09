@@ -395,6 +395,58 @@ export const sendEventOrderReceipt = (input: {
   }));
 };
 
+// Aviso interno para CUALQUIER compra que no sea de Academia (libros,
+// eventos, cursos sueltos) — Academia ya tiene el suyo propio, mas detallado,
+// en sendAcademiaOrderNotice (grantAcademiaAccess llama a ese en vez de este).
+export const sendOrderAdminNotice = (input: {
+  orderId: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone?: string;
+  itemsTitle: string;
+  amountPaid: number;
+  receiptUrl: string;
+}): Promise<unknown> =>
+  send(
+    ADMIN_NOTICE_EMAIL,
+    'Nueva compra confirmada en diegodiaz.mx',
+    emailShell({
+      eyebrow: 'Compra confirmada',
+      badge: 'Pagado',
+      title: `Nueva compra<br/>${accent('confirmada.')}`,
+      lead: 'Se confirmó un pago en el sitio. Los datos del cliente y la referencia interna están abajo, listos para seguimiento administrativo.',
+      headerCta: { label: 'Ir a admin', url: `${env.clientUrl}/admin` },
+      content: `
+      ${amountBand('Monto cobrado', formatMXN(input.amountPaid))}
+      ${confirmationPanel({
+        label: 'Venta registrada',
+        tag: 'Pago único',
+        value: accent(input.itemsTitle),
+        description: 'Datos del cliente y referencia de la orden para seguimiento administrativo.',
+        rows: [
+          ['Producto', input.itemsTitle],
+          ['Nombre', input.customerName],
+          ['Correo', input.customerEmail],
+          ['Teléfono', input.customerPhone || '—'],
+          ['Monto', formatMXN(input.amountPaid)],
+        ],
+      })}
+      <div style="margin-top:22px;">
+        ${input.receiptUrl ? linkButton({ label: 'Ver recibo', detail: `Orden #${input.orderId.slice(-8).toUpperCase()}`, url: input.receiptUrl, dark: true }) : ''}
+      </div>
+    `,
+      footerMeta: {
+        left: `Orden #${input.orderId.slice(-8).toUpperCase()}`,
+        right: formatDateTimeEs(new Date()),
+      },
+      footerNote: {
+        tag: '— Notificación administrativa',
+        body: `diegodiaz.mx · enviado a ${ADMIN_NOTICE_EMAIL.toLowerCase()}. Este correo es interno y no contiene datos sensibles del pago.`,
+      },
+      preheader: `Nueva compra confirmada: ${input.itemsTitle}.`,
+    }),
+  );
+
 const formatDateEs = (date: Date): string =>
   new Intl.DateTimeFormat('es-MX', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'America/Mexico_City' }).format(date);
 
