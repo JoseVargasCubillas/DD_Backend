@@ -12,6 +12,8 @@ import {
   sendMediaKitEmail,
   sendNewsletterWelcomeEmail,
 } from './email.service.js';
+import { enqueueLeadTransactional } from './email-queue.service.js';
+import type { EmailQueueKind } from '../../molecules/models/email-queue.model.js';
 
 // Guías se almacenan en <project-root>/assets. Backend arranca desde su raíz.
 const GUIDE_PATH = path.resolve(process.cwd(), 'assets', 'iniciativa-fiscal-2027.pdf');
@@ -32,7 +34,17 @@ const IS_EMAIL_TRANSIENT_FAILURE = (err: unknown): boolean => {
   const msg = String((err as { message?: string })?.message ?? err ?? '').toLowerCase();
   return /daily user sending limit|sending limits|rate limit|too many|quota|4\.7\.0|5\.4\.5|econnrefused|etimedout|econnreset|greeting never received|invalid login|authentication/i.test(msg);
 };
-const markEmailPending = async (lead: ILeadDocument, err: unknown): Promise<void> => {
+/**
+ * Cuando el envio inmediato falla por causa transitoria (cap diario, SMTP
+ * caido, timeout), marcamos el lead como pendiente Y encolamos el job en la
+ * email-queue para reintento cuando haya capacidad al dia siguiente.
+ */
+const scheduleForRetry = async (
+  lead: ILeadDocument,
+  kind: Exclude<EmailQueueKind, 'migration_welcome'>,
+  payload: Record<string, unknown>,
+  err: unknown,
+): Promise<void> => {
   const reason = String((err as { message?: string })?.message ?? err ?? 'desconocido').slice(0, 500);
   lead.meta = {
     ...(lead.meta ?? {}),
@@ -41,7 +53,18 @@ const markEmailPending = async (lead: ILeadDocument, err: unknown): Promise<void
     emailLastAttemptAt: new Date().toISOString(),
   };
   await lead.save();
-  console.warn(`[lead] email pendiente para ${lead.email} · ${reason}`);
+  try {
+    await enqueueLeadTransactional({
+      kind,
+      leadId: String(lead._id ?? lead.id ?? ''),
+      toEmail: lead.email,
+      toName: lead.name,
+      payload,
+    });
+    console.warn(`[lead] email encolado para reintento · ${lead.email} · ${kind} · ${reason}`);
+  } catch (queueErr) {
+    console.error(`[lead] fallo encolando reintento para ${lead.email}:`, (queueErr as Error).message);
+  }
 };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -142,7 +165,7 @@ export const sendSatGuide = async (input: {
     return { lead, emailStatus: 'delivered', downloadUrl };
   } catch (err) {
     if (!IS_EMAIL_TRANSIENT_FAILURE(err)) throw err;
-    await markEmailPending(lead, err);
+    await scheduleForRetry(lead, 'lead_sat_guide', { downloadUrl }, err);
     return { lead, emailStatus: 'pending', downloadUrl };
   }
 };
@@ -180,7 +203,7 @@ export const sendMediaKit = async (input: {
     return { lead, emailStatus: 'delivered', downloadUrl };
   } catch (err) {
     if (!IS_EMAIL_TRANSIENT_FAILURE(err)) throw err;
-    await markEmailPending(lead, err);
+    await scheduleForRetry(lead, 'lead_media_kit', { downloadUrl }, err);
     return { lead, emailStatus: 'pending', downloadUrl };
   }
 };
@@ -226,7 +249,12 @@ export const sendEstrategiaFiscalDossier = async (input: {
     return { lead, emailStatus: 'delivered', downloadUrl };
   } catch (err) {
     if (!IS_EMAIL_TRANSIENT_FAILURE(err)) throw err;
-    await markEmailPending(lead, err);
+    await scheduleForRetry(
+      lead,
+      'lead_estrategia_dossier',
+      { downloadUrl, phone: lead.phone },
+      err,
+    );
     return { lead, emailStatus: 'pending', downloadUrl };
   }
 };
@@ -287,7 +315,12 @@ export const sendDownloadableResource = async (input: {
     return { lead, emailStatus: 'delivered', downloadUrl };
   } catch (err) {
     if (!IS_EMAIL_TRANSIENT_FAILURE(err)) throw err;
-    await markEmailPending(lead, err);
+    await scheduleForRetry(
+      lead,
+      'lead_resource_download',
+      { downloadUrl, resourceTitle, resourceId },
+      err,
+    );
     return { lead, emailStatus: 'pending', downloadUrl };
   }
 };
@@ -329,7 +362,7 @@ export const subscribeNewsletter = async (input: {
       await lead.save();
     } catch (err) {
       if (!IS_EMAIL_TRANSIENT_FAILURE(err)) throw err;
-      await markEmailPending(lead, err);
+      await scheduleForRetry(lead, 'lead_newsletter_welcome', {}, err);
     }
   }
 
