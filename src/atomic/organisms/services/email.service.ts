@@ -674,7 +674,7 @@ export const sendGuideEmail = (
     input.email,
     'Iniciativa Fiscal 2027: 15 cambios que ya debes tener en el radar — Diego Díaz',
     emailShell({
-      eyebrow: 'Guía · Regalo editorial',
+      eyebrow: 'Documento · Regalo editorial',
       badge: 'PDF · Iniciativa 2027',
       title: `Iniciativa Fiscal 2027:<br/>15 cambios que ya debes<br/>tener en el ${accent('radar.')}`,
       lead: input.name
@@ -682,7 +682,7 @@ export const sendGuideEmail = (
         : 'Aquí tienes tu ejemplar en PDF. Puedes descargarlo desde el adjunto de este mismo correo.',
       content: `
         <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
-          En esta guía repasamos los 15 cambios más relevantes de la Iniciativa Fiscal 2027 —RESICO, deducciones, pérdidas fiscales y más— para que tú y tu equipo lleguen preparados a la próxima temporada.
+          En este documento repasamos los 15 cambios más relevantes de la Iniciativa Fiscal 2027 —RESICO, deducciones, pérdidas fiscales y más— para que tú y tu equipo lleguen preparados a la próxima temporada.
         </p>
         <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
           Si quieres profundizar en cómo impactan a tu caso, responde a este correo y te acompañamos desde el despacho.
@@ -694,7 +694,7 @@ export const sendGuideEmail = (
       `,
       ctaLabel: 'Conocer la Academia',
       ctaUrl: `${env.clientUrl}/academia`,
-      preheader: 'Adjuntamos tu guía en PDF de la Iniciativa Fiscal 2027.',
+      preheader: 'Adjuntamos tu documento en PDF de la Iniciativa Fiscal 2027.',
     }),
     [
       {
