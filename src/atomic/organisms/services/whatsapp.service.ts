@@ -61,7 +61,7 @@ export const sendWhatsappMessage = async (
     const res = await fetch(`${env.whatsapp.whapiUrl}/messages/text`, {
       method: 'POST',
       headers: {
-        Authorization: `****** ${env.whatsapp.whapiToken}`,
+        Authorization: `Bearer ${env.whatsapp.whapiToken}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ to, body: messageText }),
