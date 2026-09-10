@@ -7,7 +7,7 @@ import { env } from '../../../config/env.js';
 // se busca aqui (el usuario prefiere que la Academia mande desde el numero
 // oficial ya conectado en la Consultoria).
 
-const WHAPI_TIMEOUT_MS = 15000;
+const WHAPI_TIMEOUT_MS = 30000;
 
 // Whapi impone rate limits y una sesion inestable no aguanta rafagas. Un
 // intervalo conservador evita que la primera parte del broadcast queme el
