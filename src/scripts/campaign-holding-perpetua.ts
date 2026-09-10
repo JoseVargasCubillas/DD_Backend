@@ -22,6 +22,7 @@
  *   CAMPAIGN_ONLY_SEGMENTS=hubspot-holding,internal-estrategia-fiscal-dossier
  */
 
+import '../config/load-env.js';
 import fs from 'fs';
 import path from 'path';
 import XLSX from 'xlsx';
