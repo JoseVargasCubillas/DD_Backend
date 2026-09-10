@@ -73,5 +73,7 @@ export const env = {
   whatsapp: {
     businessGroupUrl: process.env.WHATSAPP_GROUP_BUSINESS_URL ?? '',
     masterGroupUrl: process.env.WHATSAPP_GROUP_MASTER_URL ?? '',
+    whapiToken: process.env.WHAPI_TOKEN ?? '',
+    whapiUrl: process.env.WHAPI_URL ?? 'https://gate.whapi.cloud',
   },
 } as const;
