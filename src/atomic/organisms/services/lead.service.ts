@@ -4,6 +4,7 @@ import { Lead, ILeadDocument, LeadSource } from '../../molecules/models/lead.mod
 import { User } from '../../molecules/models/user.model.js';
 import { Tag } from '../../molecules/models/tag.model.js';
 import { isAllowedOrigin } from '../../../config/allowed-origins.js';
+import { env } from '../../../config/env.js';
 import {
   sendDownloadableResourceEmail,
   sendEstrategiaFiscalDossierEmail,
@@ -24,6 +25,24 @@ const ESTRATEGIA_FISCAL_DOSSIER_FILENAME = 'Seminario-Estrategia-Fiscal-Diego-Di
 const MEDIA_KIT_URL =
   process.env.MEDIA_KIT_URL ||
   'https://github.com/JoseVargasCubillas/DD_Frontend/releases/download/media-v1/DDMedia-Kit.pdf';
+
+// Fallback download endpoints — sirven el PDF directo cuando SMTP está caído o sobre cap.
+const publicBase = (env.serverUrl || '').replace(/\/$/, '');
+const IS_EMAIL_TRANSIENT_FAILURE = (err: unknown): boolean => {
+  const msg = String((err as { message?: string })?.message ?? err ?? '').toLowerCase();
+  return /daily user sending limit|sending limits|rate limit|too many|quota|4\.7\.0|5\.4\.5|econnrefused|etimedout|econnreset|greeting never received|invalid login|authentication/i.test(msg);
+};
+const markEmailPending = async (lead: ILeadDocument, err: unknown): Promise<void> => {
+  const reason = String((err as { message?: string })?.message ?? err ?? 'desconocido').slice(0, 500);
+  lead.meta = {
+    ...(lead.meta ?? {}),
+    emailPending: true,
+    emailLastError: reason,
+    emailLastAttemptAt: new Date().toISOString(),
+  };
+  await lead.save();
+  console.warn(`[lead] email pendiente para ${lead.email} · ${reason}`);
+};
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -77,11 +96,17 @@ export const captureLead = async (input: {
   });
 };
 
+export interface LeadDeliveryResult {
+  lead: ILeadDocument;
+  emailStatus: 'delivered' | 'pending';
+  downloadUrl?: string;
+}
+
 export const sendSatGuide = async (input: {
   email: string;
   name?: string;
   phone?: string;
-}): Promise<ILeadDocument> => {
+}): Promise<LeadDeliveryResult> => {
   const phone = input.phone?.trim();
   if (!phone) {
     const err: any = new Error('El número de teléfono es requerido.');
@@ -103,24 +128,30 @@ export const sendSatGuide = async (input: {
     throw err;
   }
 
-  await sendGuideEmail({
-    email: lead.email,
-    name: lead.name,
-    guidePath: GUIDE_PATH,
-    guideFilename: GUIDE_FILENAME,
-  });
+  const downloadUrl = `${publicBase}/api/v1/leads/download/iniciativa-fiscal-2027`;
 
-  lead.emailedAt = new Date();
-  await lead.save();
-
-  return lead;
+  try {
+    await sendGuideEmail({
+      email: lead.email,
+      name: lead.name,
+      guidePath: GUIDE_PATH,
+      guideFilename: GUIDE_FILENAME,
+    });
+    lead.emailedAt = new Date();
+    await lead.save();
+    return { lead, emailStatus: 'delivered', downloadUrl };
+  } catch (err) {
+    if (!IS_EMAIL_TRANSIENT_FAILURE(err)) throw err;
+    await markEmailPending(lead, err);
+    return { lead, emailStatus: 'pending', downloadUrl };
+  }
 };
 
 export const sendMediaKit = async (input: {
   email: string;
   name?: string;
   phone?: string;
-}): Promise<ILeadDocument> => {
+}): Promise<LeadDeliveryResult> => {
   const phone = input.phone?.trim();
   if (!phone) {
     const err: any = new Error('El número de teléfono es requerido.');
@@ -138,23 +169,27 @@ export const sendMediaKit = async (input: {
     meta: { deliveredResource: 'DDMedia-Kit.pdf', downloadUrl },
   });
 
-  await sendMediaKitEmail({
-    email: lead.email,
-    name: lead.name,
-    downloadUrl,
-  });
-
-  lead.emailedAt = new Date();
-  await lead.save();
-
-  return lead;
+  try {
+    await sendMediaKitEmail({
+      email: lead.email,
+      name: lead.name,
+      downloadUrl,
+    });
+    lead.emailedAt = new Date();
+    await lead.save();
+    return { lead, emailStatus: 'delivered', downloadUrl };
+  } catch (err) {
+    if (!IS_EMAIL_TRANSIENT_FAILURE(err)) throw err;
+    await markEmailPending(lead, err);
+    return { lead, emailStatus: 'pending', downloadUrl };
+  }
 };
 
 export const sendEstrategiaFiscalDossier = async (input: {
   email: string;
   name?: string;
   phone?: string;
-}): Promise<ILeadDocument> => {
+}): Promise<LeadDeliveryResult> => {
   const phone = input.phone?.trim();
   if (!phone) {
     const err: any = new Error('El número de teléfono es requerido.');
@@ -176,18 +211,24 @@ export const sendEstrategiaFiscalDossier = async (input: {
     throw err;
   }
 
-  await sendEstrategiaFiscalDossierEmail({
-    email: lead.email,
-    name: lead.name,
-    phone: lead.phone,
-    dossierPath: ESTRATEGIA_FISCAL_DOSSIER_PATH,
-    dossierFilename: ESTRATEGIA_FISCAL_DOSSIER_FILENAME,
-  });
+  const downloadUrl = `${publicBase}/api/v1/leads/download/estrategia-fiscal-dossier`;
 
-  lead.emailedAt = new Date();
-  await lead.save();
-
-  return lead;
+  try {
+    await sendEstrategiaFiscalDossierEmail({
+      email: lead.email,
+      name: lead.name,
+      phone: lead.phone,
+      dossierPath: ESTRATEGIA_FISCAL_DOSSIER_PATH,
+      dossierFilename: ESTRATEGIA_FISCAL_DOSSIER_FILENAME,
+    });
+    lead.emailedAt = new Date();
+    await lead.save();
+    return { lead, emailStatus: 'delivered', downloadUrl };
+  } catch (err) {
+    if (!IS_EMAIL_TRANSIENT_FAILURE(err)) throw err;
+    await markEmailPending(lead, err);
+    return { lead, emailStatus: 'pending', downloadUrl };
+  }
 };
 
 export const sendDownloadableResource = async (input: {
@@ -197,7 +238,7 @@ export const sendDownloadableResource = async (input: {
   resourceId: string;
   resourceTitle: string;
   downloadUrl: string;
-}): Promise<ILeadDocument> => {
+}): Promise<LeadDeliveryResult> => {
   const resourceTitle = input.resourceTitle.trim();
   const downloadUrl = input.downloadUrl.trim();
   const resourceId = input.resourceId.trim();
@@ -234,17 +275,36 @@ export const sendDownloadableResource = async (input: {
     },
   });
 
-  await sendDownloadableResourceEmail({
-    email: lead.email,
-    name: lead.name,
-    resourceTitle,
-    downloadUrl,
-  });
+  try {
+    await sendDownloadableResourceEmail({
+      email: lead.email,
+      name: lead.name,
+      resourceTitle,
+      downloadUrl,
+    });
+    lead.emailedAt = new Date();
+    await lead.save();
+    return { lead, emailStatus: 'delivered', downloadUrl };
+  } catch (err) {
+    if (!IS_EMAIL_TRANSIENT_FAILURE(err)) throw err;
+    await markEmailPending(lead, err);
+    return { lead, emailStatus: 'pending', downloadUrl };
+  }
+};
 
-  lead.emailedAt = new Date();
-  await lead.save();
-
-  return lead;
+// Sirve el PDF de la guía o el dossier — usado como fallback cuando SMTP falla.
+export const getDownloadableResource = (
+  key: string,
+): { filePath: string; filename: string } | null => {
+  if (key === 'iniciativa-fiscal-2027') {
+    if (!fs.existsSync(GUIDE_PATH)) return null;
+    return { filePath: GUIDE_PATH, filename: GUIDE_FILENAME };
+  }
+  if (key === 'estrategia-fiscal-dossier') {
+    if (!fs.existsSync(ESTRATEGIA_FISCAL_DOSSIER_PATH)) return null;
+    return { filePath: ESTRATEGIA_FISCAL_DOSSIER_PATH, filename: ESTRATEGIA_FISCAL_DOSSIER_FILENAME };
+  }
+  return null;
 };
 
 export const subscribeNewsletter = async (input: {
@@ -263,9 +323,14 @@ export const subscribeNewsletter = async (input: {
   });
 
   if (!lead.emailedAt) {
-    await sendNewsletterWelcomeEmail({ email: lead.email, name: lead.name });
-    lead.emailedAt = new Date();
-    await lead.save();
+    try {
+      await sendNewsletterWelcomeEmail({ email: lead.email, name: lead.name });
+      lead.emailedAt = new Date();
+      await lead.save();
+    } catch (err) {
+      if (!IS_EMAIL_TRANSIENT_FAILURE(err)) throw err;
+      await markEmailPending(lead, err);
+    }
   }
 
   return lead;

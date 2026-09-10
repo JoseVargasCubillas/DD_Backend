@@ -10,11 +10,13 @@ export const requestSatGuide: RequestHandler = async (req, res) => {
 
     if (!email) return badRequest(res, 'El correo es requerido.');
 
-    const lead = await leadService.sendSatGuide({ email, name, phone });
+    const result = await leadService.sendSatGuide({ email, name, phone });
     return created(res, {
-      email: lead.email,
-      source: lead.source,
-      emailedAt: lead.emailedAt,
+      email: result.lead.email,
+      source: result.lead.source,
+      emailedAt: result.lead.emailedAt,
+      emailStatus: result.emailStatus,
+      downloadUrl: result.downloadUrl,
     });
   } catch (err: any) {
     if (err.statusCode === 400) return badRequest(res, err.message);
@@ -30,11 +32,13 @@ export const requestMediaKit: RequestHandler = async (req, res) => {
 
     if (!email) return badRequest(res, 'El correo es requerido.');
 
-    const lead = await leadService.sendMediaKit({ email, name, phone });
+    const result = await leadService.sendMediaKit({ email, name, phone });
     return created(res, {
-      email: lead.email,
-      source: lead.source,
-      emailedAt: lead.emailedAt,
+      email: result.lead.email,
+      source: result.lead.source,
+      emailedAt: result.lead.emailedAt,
+      emailStatus: result.emailStatus,
+      downloadUrl: result.downloadUrl,
     });
   } catch (err: any) {
     if (err.statusCode === 400) return badRequest(res, err.message);
@@ -52,12 +56,14 @@ export const requestEstrategiaFiscalDossier: RequestHandler = async (req, res) =
     if (!name) return badRequest(res, 'El nombre es requerido.');
     if (!phone) return badRequest(res, 'El número de teléfono es requerido.');
 
-    const lead = await leadService.sendEstrategiaFiscalDossier({ email, name, phone });
+    const result = await leadService.sendEstrategiaFiscalDossier({ email, name, phone });
     return created(res, {
-      email: lead.email,
-      source: lead.source,
-      phone: lead.phone,
-      emailedAt: lead.emailedAt,
+      email: result.lead.email,
+      source: result.lead.source,
+      phone: result.lead.phone,
+      emailedAt: result.lead.emailedAt,
+      emailStatus: result.emailStatus,
+      downloadUrl: result.downloadUrl,
     });
   } catch (err: any) {
     if (err.statusCode === 400) return badRequest(res, err.message);
@@ -79,7 +85,7 @@ export const requestDownloadableResource: RequestHandler = async (req, res) => {
       return badRequest(res, 'La información del recurso es requerida.');
     }
 
-    const lead = await leadService.sendDownloadableResource({
+    const result = await leadService.sendDownloadableResource({
       email,
       name,
       phone,
@@ -89,14 +95,33 @@ export const requestDownloadableResource: RequestHandler = async (req, res) => {
     });
 
     return created(res, {
-      email: lead.email,
-      source: lead.source,
-      phone: lead.phone,
-      emailedAt: lead.emailedAt,
-      downloadUrl,
+      email: result.lead.email,
+      source: result.lead.source,
+      phone: result.lead.phone,
+      emailedAt: result.lead.emailedAt,
+      emailStatus: result.emailStatus,
+      downloadUrl: result.downloadUrl,
     });
   } catch (err: any) {
     if (err.statusCode === 400) return badRequest(res, err.message);
+    return serverError(res, err);
+  }
+};
+
+// Sirve el PDF de la guía / dossier como fallback público. Usado por el
+// frontend cuando el email queda pendiente (SMTP caído o sobre cap).
+export const downloadResource: RequestHandler = async (req, res) => {
+  try {
+    const key = String(req.params.key ?? '').trim();
+    const resource = leadService.getDownloadableResource(key);
+    if (!resource) return notFound(res, 'Recurso no disponible.');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${resource.filename}"`,
+    );
+    return res.sendFile(resource.filePath);
+  } catch (err: any) {
     return serverError(res, err);
   }
 };

@@ -20,6 +20,7 @@ router.post('/estrategia-fiscal-dossier', guideLimiter, leadController.requestEs
 router.post('/resource', guideLimiter, leadController.requestDownloadableResource);
 router.post('/newsletter', guideLimiter, leadController.subscribeNewsletter);
 router.post('/sat-waitlist', guideLimiter, leadController.subscribeSatWaitlist);
+router.get('/download/:key', leadController.downloadResource);
 router.get('/', authenticate, requireAdmin, leadController.list);
 router.get('/unified', authenticate, requireAdmin, leadController.listUnified);
 router.post('/bulk-delete', authenticate, requireAdmin, leadController.bulkRemove);
