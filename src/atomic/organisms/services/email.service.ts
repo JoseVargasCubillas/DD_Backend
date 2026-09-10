@@ -705,6 +705,57 @@ export const sendGuideEmail = (
     ],
   );
 
+export const sendHoldingOfferEmail = (
+  input: {
+    email: string;
+    name?: string;
+    contextLine: string;
+    stripeUrl: string;
+    offerPrice: number;
+    regularPrice: number;
+    eventDateLabel: string;
+    deadlineLabel: string;
+  },
+): Promise<unknown> => {
+  const firstName = String(input.name || '').trim().split(/\s+/)[0] || '';
+  const salute = firstName ? `${firstName},` : 'Hola,';
+  const offer = input.offerPrice.toLocaleString('es-MX');
+  const regular = input.regularPrice.toLocaleString('es-MX');
+  return send(
+    input.email,
+    `Oferta exclusiva, solo HOY $${offer} (expira a las 11:59 PM)`,
+    emailShell({
+      eyebrow: 'Oferta · Holding & Protección Patrimonial',
+      badge: `Solo hoy · $${offer} MXN`,
+      title: `Solo por hoy:<br/>Holding & ${accent('Protección Patrimonial.')}`,
+      lead: `${salute} porque ${escapeHtml(input.contextLine)}, tenemos algo especial solo por hoy: acceso a Holding & Protección Patrimonial con Diego Díaz a $${offer} MXN en lugar de $${regular}. Una condición exclusiva que no se repite después de hoy.`,
+      content: `
+        <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
+          Esta oferta desaparece a la medianoche. No hay extensión ni excepciones.
+        </p>
+        <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
+          Si tu empresa ya tiene activos, contratos relevantes, socios o varias sociedades, esto te interesa: son <strong>2.5 horas</strong>, el <strong>${escapeHtml(input.eventDateLabel)}</strong>, <strong>100% online</strong>, para que sepas exactamente cómo separar riesgos, activos y operación antes de que un problema fiscal, legal o familiar te obligue a resolverlo bajo presión.
+        </p>
+        <div style="margin:0 0 8px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">— Al inscribirte hoy aseguras</div>
+        <ul style="margin:0 0 22px;padding:0 0 0 18px;color:#5f574f;font-size:14px;line-height:1.75;">
+          <li>Tu lugar en la sesión en vivo con Diego Díaz.</li>
+          <li>El precio más bajo que vamos a ofrecer para este grupo.</li>
+          <li>Material de apoyo + ruta para solicitar diagnóstico de tu caso.</li>
+        </ul>
+        <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
+          Una vez que el reloj llegue a las <strong>11:59 PM</strong>, esta oferta ya no aplica.
+        </p>
+        <p style="margin:0 0 4px;color:#5f574f;font-size:14px;line-height:1.7;">
+          ¿Tienes dudas antes de inscribirte? Responde a este correo y te ayudo directo.
+        </p>
+      `,
+      ctaLabel: `Aprovecha tu precio exclusivo de $${offer}`,
+      ctaUrl: input.stripeUrl,
+      preheader: `Oferta ${escapeHtml(input.deadlineLabel)} · $${offer} MXN (antes $${regular}).`,
+    }),
+  );
+};
+
 export const sendMediaKitEmail = (
   input: { email: string; name?: string; downloadUrl: string },
 ): Promise<unknown> =>
