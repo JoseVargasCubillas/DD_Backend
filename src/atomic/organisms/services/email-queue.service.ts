@@ -30,6 +30,8 @@ const SEND_INTERVAL_MS = Number(process.env.EMAIL_QUEUE_INTERVAL_MS) || 2500;
 const MAX_ATTEMPTS = 5;
 
 let workerStarted = false;
+// Cuando SMTP rechaza por cap diario, pausamos el worker hasta este timestamp.
+let pausedUntil = 0;
 
 export const enqueueMigrationWelcome = async (input: {
   name: string;
@@ -165,6 +167,7 @@ const pickNextJob = async (sentToday: number): Promise<IEmailQueueJobDocument | 
 
 const processNext = async (): Promise<void> => {
   try {
+    if (Date.now() < pausedUntil) return;
     const sentToday = await countSentInLast24h();
     if (sentToday >= TOTAL_SEND_CAP) return;
 
@@ -195,12 +198,26 @@ const processNext = async (): Promise<void> => {
         }
       }
     } catch (err) {
-      const attempts = Number(job.attempts ?? 0) + 1;
-      await EmailQueueJob.findByIdAndUpdate(job._id, {
-        status: attempts >= MAX_ATTEMPTS ? 'failed' : 'pending',
-        attempts,
-        lastError: (err as Error).message,
-      });
+      const message = (err as Error).message ?? String(err);
+      // Errores de cap diario / rate limit no queman attempts: el job queda
+      // pending para reintentarse cuando el cap reseté. Ademas pausamos el
+      // worker una hora para no golpear SMTP en vacio.
+      const isCapExceeded = /daily user sending limit|sending limits|rate limit|too many|quota|4\.7\.0|5\.4\.5/i.test(message);
+      if (isCapExceeded) {
+        pausedUntil = Date.now() + 60 * 60 * 1000;
+        await EmailQueueJob.findByIdAndUpdate(job._id, {
+          status: 'pending',
+          lastError: message,
+        });
+        console.warn('[email-queue] SMTP cap alcanzado, pauso worker 1h. Job vuelve a pending.');
+      } else {
+        const attempts = Number(job.attempts ?? 0) + 1;
+        await EmailQueueJob.findByIdAndUpdate(job._id, {
+          status: attempts >= MAX_ATTEMPTS ? 'failed' : 'pending',
+          attempts,
+          lastError: message,
+        });
+      }
     }
   } catch (err) {
     console.error('[email-queue] worker error:', (err as Error).message);
