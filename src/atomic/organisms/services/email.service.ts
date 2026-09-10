@@ -672,20 +672,20 @@ export const sendGuideEmail = (
 ): Promise<unknown> =>
   sendWithAttachments(
     input.email,
-    'Tu guía para blindarte del SAT — Diego Díaz',
+    'Iniciativa Fiscal 2027: 15 cambios que ya debes tener en el radar — Diego Díaz',
     emailShell({
       eyebrow: 'Guía · Regalo editorial',
-      badge: 'PDF · 2026',
-      title: `Aquí está tu guía<br/>para blindarte del ${accent('SAT.')}`,
+      badge: 'PDF · Iniciativa 2027',
+      title: `Iniciativa Fiscal 2027:<br/>15 cambios que ya debes<br/>tener en el ${accent('radar.')}`,
       lead: input.name
         ? `Hola ${input.name}, aquí tienes tu ejemplar en PDF. Puedes descargarlo desde el adjunto de este mismo correo.`
         : 'Aquí tienes tu ejemplar en PDF. Puedes descargarlo desde el adjunto de este mismo correo.',
       content: `
         <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
-          Esta guía reúne los criterios que trabajamos con clientes de Díaz Lara Consultoría para anticipar auditorías, ordenar la contabilidad y sostener una defensa fiscal sólida.
+          En esta guía repasamos los 15 cambios más relevantes de la Iniciativa Fiscal 2027 —RESICO, deducciones, pérdidas fiscales y más— para que tú y tu equipo lleguen preparados a la próxima temporada.
         </p>
         <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
-          Si quieres profundizar en un caso propio, responde a este correo y te acompañamos desde el despacho.
+          Si quieres profundizar en cómo impactan a tu caso, responde a este correo y te acompañamos desde el despacho.
         </p>
         <div style="margin:0 0 8px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">— Cómo abrir el material</div>
         <p style="margin:0;color:#5f574f;font-size:14px;line-height:1.7;">
@@ -694,7 +694,7 @@ export const sendGuideEmail = (
       `,
       ctaLabel: 'Conocer la Academia',
       ctaUrl: `${env.clientUrl}/academia`,
-      preheader: 'Adjuntamos tu guía en PDF para blindarte del SAT.',
+      preheader: 'Adjuntamos tu guía en PDF de la Iniciativa Fiscal 2027.',
     }),
     [
       {

@@ -13,8 +13,8 @@ import {
 } from './email.service.js';
 
 // Guías se almacenan en <project-root>/assets. Backend arranca desde su raíz.
-const GUIDE_PATH = path.resolve(process.cwd(), 'assets', 'guia-blindaje-sat.pdf');
-const GUIDE_FILENAME = 'Guia-Blindaje-SAT-Diego-Diaz.pdf';
+const GUIDE_PATH = path.resolve(process.cwd(), 'assets', 'iniciativa-fiscal-2027.pdf');
+const GUIDE_FILENAME = 'Iniciativa-Fiscal-2027-Diego-Diaz.pdf';
 const ESTRATEGIA_FISCAL_DOSSIER_PATH = path.resolve(
   process.cwd(),
   'assets',
