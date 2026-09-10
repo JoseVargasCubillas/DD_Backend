@@ -369,11 +369,40 @@ const main = async () => {
   if (!SKIP_WHATSAPP && isWhatsappBroadcastConfigured()) {
     console.log('[campaign] WhatsApp: comenzando');
     let sent = 0, failed = 0, skipped = 0;
+    const WHAPI_TOKEN = process.env.WHAPI_TOKEN || '';
+    const WHAPI_URL = process.env.WHAPI_URL || 'https://gate.whapi.cloud';
+    const isChannelReady = async (): Promise<boolean> => {
+      try {
+        const r = await fetch(`${WHAPI_URL}/health`, { headers: { Authorization: `Bearer ${WHAPI_TOKEN}` } });
+        const j: any = await r.json();
+        return j?.status?.text === 'AUTH';
+      } catch { return false; }
+    };
     for (const c of contacts) {
       if (!c.phone) { skipped += 1; continue; }
       if (waSet.has(c.phone)) { skipped += 1; continue; }
       const body = buildWhatsappMessage(c);
-      const outcome = await sendWhatsappMessage(c.phone, body);
+      let outcome = await sendWhatsappMessage(c.phone, body);
+      // Si el canal se cayó, espera hasta 30 min por reautorización antes de contar como fallo
+      if (outcome.status === 'failed' && /channel authorization/i.test(outcome.error ?? '')) {
+        console.warn(`[campaign] Whapi desautorizado, esperando reconexión (contacto ${c.phone})...`);
+        let waited = 0;
+        while (waited < 30 * 60_000) {
+          await delay(30_000);
+          waited += 30_000;
+          if (await isChannelReady()) {
+            console.log(`[campaign] Whapi reautorizado tras ${Math.round(waited/1000)}s, reintentando ${c.phone}`);
+            outcome = await sendWhatsappMessage(c.phone, body);
+            break;
+          }
+        }
+        if (outcome.status === 'failed' && /channel authorization/i.test(outcome.error ?? '')) {
+          console.error('[campaign] Whapi sigue caído tras 30min. Abortando loop WA.');
+          logLine([new Date().toISOString(), 'wa', 'failed', c.segment, c.name, c.email, c.phone, outcome.error ?? '']);
+          saveState(state);
+          break;
+        }
+      }
       logLine([new Date().toISOString(), 'wa', outcome.status, c.segment, c.name, c.email, c.phone, outcome.error ?? '']);
       if (outcome.status === 'sent') {
         sent += 1;
