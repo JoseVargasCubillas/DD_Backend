@@ -2,6 +2,7 @@ import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
 
 export type LeadSource =
   | 'guia-blindaje-sat'
+  | 'iniciativa-fiscal-2027'
   | 'media-kit'
   | 'estrategia-fiscal-dossier'
   | 'centro-recursos'

@@ -13,6 +13,7 @@ interface Recipient {
 // Fuentes que consideramos "leads editoriales" (recursos descargables públicos)
 const GUIDE_LEAD_SOURCES = [
   'guia-blindaje-sat',
+  'iniciativa-fiscal-2027',
   'media-kit',
   'estrategia-fiscal-dossier',
   'centro-recursos',
@@ -167,6 +168,7 @@ export const getSegments: RequestHandler = async (_req, res) => {
     );
 
     const guiaSat = allLeads.filter((l) => l.source === 'guia-blindaje-sat').length;
+    const iniciativaFiscal2027 = allLeads.filter((l) => l.source === 'iniciativa-fiscal-2027').length;
     const newsletterLeads = allLeads.filter((l) => l.source === 'newsletter').length;
 
     const segments = {
@@ -177,6 +179,7 @@ export const getSegments: RequestHandler = async (_req, res) => {
       guideLeads: guideLeadRecipients.length,
       newsletterLeads,
       guiaSat,
+      iniciativaFiscal2027,
     };
 
     success(res, segments);

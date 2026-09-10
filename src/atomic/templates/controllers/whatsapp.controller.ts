@@ -19,6 +19,7 @@ interface Recipient {
 // segmentos y el admin no tenga que aprender dos vocabularios distintos.
 const GUIDE_LEAD_SOURCES = [
   'guia-blindaje-sat',
+  'iniciativa-fiscal-2027',
   'media-kit',
   'estrategia-fiscal-dossier',
   'centro-recursos',
@@ -174,6 +175,9 @@ export const getSegments: RequestHandler = async (_req, res) => {
       GUIDE_LEAD_SOURCES.includes(allLeads[idx].source),
     );
     const guiaSat = leadsAsRecs.filter((_, idx) => allLeads[idx].source === 'guia-blindaje-sat');
+    const iniciativaFiscal2027 = leadsAsRecs.filter(
+      (_, idx) => allLeads[idx].source === 'iniciativa-fiscal-2027',
+    );
     const newsletterLeads = leadsAsRecs.filter(
       (_, idx) => allLeads[idx].source === 'newsletter',
     );
@@ -192,6 +196,7 @@ export const getSegments: RequestHandler = async (_req, res) => {
       guideLeads: countWithPhone(guideLeadRecs),
       newsletterLeads: countWithPhone(newsletterLeads),
       guiaSat: countWithPhone(guiaSat),
+      iniciativaFiscal2027: countWithPhone(iniciativaFiscal2027),
       configured: isWhatsappBroadcastConfigured(),
     };
 

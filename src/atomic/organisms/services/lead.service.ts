@@ -93,7 +93,7 @@ export const sendSatGuide = async (input: {
     email: input.email,
     name: input.name,
     phone,
-    source: 'guia-blindaje-sat',
+    source: 'iniciativa-fiscal-2027',
     meta: { deliveredResource: GUIDE_FILENAME },
   });
 
@@ -317,6 +317,7 @@ export interface UnifiedLead {
 
 const LEAD_REASON_LABELS: Record<string, string> = {
   'guia-blindaje-sat': 'Guía SAT',
+  'iniciativa-fiscal-2027': 'Iniciativa Fiscal 2027',
   'media-kit': 'Media Kit',
   newsletter: 'Newsletter',
   'centro-recursos': 'Centro de recursos',
