@@ -339,6 +339,9 @@ const main = async () => {
   console.log('[campaign] cargados — EF/OP:', ef.length, 'HOLDING:', holding.length, 'INTERNOS:', internal.length);
 
   let contacts = dedupeContacts([...internal, ...holding, ...ef]);
+  // Ordenamos por prioridad de segmento (desc) para que el cap de emails de
+  // 1 corrida priorice los internos y HOLDING antes que el bulk de EF/OP.
+  contacts.sort((a, b) => SEGMENT_PRIORITY[b.segment] - SEGMENT_PRIORITY[a.segment]);
   if (ONLY_SEGMENTS.length > 0) {
     contacts = contacts.filter((c) => ONLY_SEGMENTS.includes(c.segment));
   }
