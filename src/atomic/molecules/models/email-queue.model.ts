@@ -9,6 +9,7 @@ import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
  */
 export type EmailQueueKind =
   | 'migration_welcome'
+  | 'holding_offer'
   | 'lead_sat_guide'
   | 'lead_media_kit'
   | 'lead_estrategia_dossier'

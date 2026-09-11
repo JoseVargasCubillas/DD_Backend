@@ -15,6 +15,7 @@ import {
   sendDownloadableResourceEmail,
   sendNewsletterWelcomeEmail,
   sendCredentials,
+  sendHoldingOfferEmail,
 } from './email.service.js';
 
 /**
@@ -200,10 +201,25 @@ const dispatchJob = async (job: IEmailQueueJobDocument): Promise<void> => {
         { isNew: false },
       );
       return;
+    case 'holding_offer':
+      // Campana Holding — el payload trae contextLine + precios.
+      await sendHoldingOfferEmail({
+        email: job.toEmail,
+        name: job.toName ?? '',
+        contextLine: String(payload.contextLine ?? ''),
+        stripeUrl: String(payload.stripeUrl ?? 'https://buy.stripe.com/aFadR8djo87lc5Z4MIgjC3v'),
+        offerPrice: Number(payload.offerPrice ?? 1500),
+        regularPrice: Number(payload.regularPrice ?? 1997),
+        eventDateLabel: String(payload.eventDateLabel ?? '22 de septiembre'),
+        deadlineLabel: String(payload.deadlineLabel ?? 'hoy a las 11:59 PM'),
+      });
+      return;
     default:
       throw new Error(`kind desconocido: ${(job as { kind?: string }).kind ?? ''}`);
   }
 };
+
+const BULK_KINDS: EmailQueueKind[] = ['migration_welcome', 'holding_offer'];
 
 const pickNextJob = async (sentToday: number): Promise<IEmailQueueJobDocument | undefined> => {
   // Siempre priorizar transaccionales — mientras haya cap total.
@@ -216,12 +232,15 @@ const pickNextJob = async (sentToday: number): Promise<IEmailQueueJobDocument | 
       );
     if (trans[0]) return trans[0];
   }
-  // Bulk solo si aun cabe dentro del cap de bulk.
+  // Bulk (migration_welcome + holding_offer) solo dentro del cap de bulk.
   if (sentToday < BULK_SEND_CAP) {
-    const [bulk] = await EmailQueueJob.find({ status: 'pending', kind: 'migration_welcome' })
-      .sort({ createdAt: 1 })
-      .limit(1);
-    if (bulk) return bulk;
+    const pending = await EmailQueueJob.find({ status: 'pending' });
+    const bulk = pending
+      .filter((j) => BULK_KINDS.includes(j.kind))
+      .sort(
+        (a, b) => new Date(String(a.createdAt)).getTime() - new Date(String(b.createdAt)).getTime(),
+      );
+    if (bulk[0]) return bulk[0];
   }
   return undefined;
 };

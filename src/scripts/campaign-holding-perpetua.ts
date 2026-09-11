@@ -33,6 +33,8 @@ import { User } from '../atomic/molecules/models/user.model.js';
 import {
   sendHoldingOfferEmail,
 } from '../atomic/organisms/services/email.service.js';
+import { EmailQueueJob } from '../atomic/molecules/models/email-queue.model.js';
+import type { IEmailQueueJobDocument } from '../atomic/molecules/models/email-queue.model.js';
 import {
   sendWhatsappMessage,
   isWhatsappBroadcastConfigured,
@@ -48,6 +50,10 @@ const SKIP_WHATSAPP = process.env.CAMPAIGN_SKIP_WHATSAPP === '1';
 const EMAIL_CAP = Number(process.env.CAMPAIGN_EMAIL_CAP || 1800);
 const EMAIL_INTERVAL_MS = Number(process.env.CAMPAIGN_EMAIL_INTERVAL_MS || 3000);
 const WA_INTERVAL_MS = Number(process.env.CAMPAIGN_WA_INTERVAL_MS || 1500);
+// Modo cola: encola jobs holding_offer en email_queue_jobs y sale
+// inmediatamente. El worker del backend los despacha respetando
+// prioridad transaccional (compras, descargas, welcomes). Recomendado.
+const ENQUEUE_ONLY = process.env.CAMPAIGN_ENQUEUE === '1';
 const ONLY_SEGMENTS = (process.env.CAMPAIGN_ONLY_SEGMENTS || '')
   .split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -422,8 +428,46 @@ const main = async () => {
     console.warn('[campaign] WhatsApp deshabilitado — WHAPI_TOKEN no configurado.');
   }
 
-  // 2) Email — con cap prudente y throttle propio.
+  // 2) Email — dos modos.
   if (!SKIP_EMAIL) {
+    if (ENQUEUE_ONLY) {
+      // Modo cola: encolamos hasta EMAIL_CAP jobs 'holding_offer'. El worker
+      // del backend despacha respetando prioridad transaccional. Si en
+      // medio llega una descarga/compra/welcome, el worker lo procesa
+      // primero y automaticamente reanuda la campana.
+      console.log('[campaign] Email ENQUEUE mode — encolando hasta', EMAIL_CAP, 'jobs');
+      let enqueued = 0, skipped = 0;
+      for (const c of contacts) {
+        if (enqueued >= EMAIL_CAP) break;
+        if (emailedSet.has(c.email)) { skipped += 1; continue; }
+        // Dedupe: no encolar dos veces al mismo email.
+        const existing = await EmailQueueJob.find({
+          kind: 'holding_offer',
+          toEmail: c.email,
+          status: 'pending',
+        });
+        if (existing.length > 0) { skipped += 1; continue; }
+        await EmailQueueJob.create({
+          kind: 'holding_offer',
+          toEmail: c.email,
+          toName: c.name,
+          payload: {
+            contextLine: SEGMENT_CONTEXT[c.segment],
+            stripeUrl: STRIPE_URL,
+            offerPrice: OFFER_PRICE_MXN,
+            regularPrice: REGULAR_PRICE_MXN,
+            eventDateLabel: EVENT_DATE_LABEL,
+            deadlineLabel: DEADLINE_LABEL,
+            segment: c.segment,
+          },
+        } as Partial<IEmailQueueJobDocument>);
+        emailedSet.add(c.email);
+        state.emailedKeys.push(c.email);
+        enqueued += 1;
+      }
+      saveState(state);
+      console.log(`[campaign] Email ENQUEUE terminó — encolados:${enqueued} skipped:${skipped}`);
+    } else {
     console.log('[campaign] Email: comenzando (cap:', EMAIL_CAP, ')');
     let sent = 0, failed = 0, skipped = 0;
     for (const c of contacts) {
@@ -459,6 +503,7 @@ const main = async () => {
     }
     saveState(state);
     console.log(`[campaign] Email terminó — sent:${sent} failed:${failed} skipped:${skipped}`);
+    }
   } else {
     console.log('[campaign] Email SKIP por env');
   }
