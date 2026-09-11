@@ -204,12 +204,12 @@ const processNext = async (): Promise<void> => {
       // worker una hora para no golpear SMTP en vacio.
       const isCapExceeded = /daily user sending limit|sending limits|rate limit|too many|quota|4\.7\.0|5\.4\.5/i.test(message);
       if (isCapExceeded) {
-        pausedUntil = Date.now() + 60 * 60 * 1000;
+        pausedUntil = Date.now() + 15 * 60 * 1000;
         await EmailQueueJob.findByIdAndUpdate(job._id, {
           status: 'pending',
           lastError: message,
         });
-        console.warn('[email-queue] SMTP cap alcanzado, pauso worker 1h. Job vuelve a pending.');
+        console.warn('[email-queue] SMTP cap alcanzado, pauso worker 15 min. Job vuelve a pending.');
       } else {
         const attempts = Number(job.attempts ?? 0) + 1;
         await EmailQueueJob.findByIdAndUpdate(job._id, {
