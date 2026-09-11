@@ -335,16 +335,25 @@ export const createPaymentIntent = async (
     return { clientSecret: `demo_${order._id}`, orderId: order._id, subtotal, tax, shippingCost, total };
   }
 
+  // itemsSummary vive en el metadata del PaymentIntent para que la transaccion
+  // sea identificable directamente desde el Dashboard de Stripe (sin tener que
+  // cruzar el payment_intent.id contra la orden en la DB primero).
+  const itemsSummary = normalizedItems.map((i) => i.title).join(', ').slice(0, 480);
   const intent = await stripe.paymentIntents.create({
     amount: Math.round(total * 100),
     currency: 'mxn',
-    metadata: { userId: user },
+    metadata: { userId: user, source: 'web', items: itemsSummary },
   });
   const order = await Order.create({
     user, contact, items: normalizedItems, subtotal, tax, shippingCost, shipping: shipping ?? null,
     shippingCarrier, shippingService, total,
     status: ORDER_STATUS.PENDING,
     stripePaymentIntentId: intent.id,
+  });
+  // El orderId solo existe tras crear la orden (depende de intent.id), asi que
+  // se agrega al metadata con un update en vez de en el create de arriba.
+  await stripe.paymentIntents.update(intent.id, {
+    metadata: { userId: user, source: 'web', items: itemsSummary, orderId: String(order._id) },
   });
   return { clientSecret: intent.client_secret, orderId: order._id, subtotal, tax, shippingCost, total };
 };
