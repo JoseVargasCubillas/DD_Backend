@@ -13,7 +13,9 @@ export type EmailQueueKind =
   | 'lead_media_kit'
   | 'lead_estrategia_dossier'
   | 'lead_resource_download'
-  | 'lead_newsletter_welcome';
+  | 'lead_newsletter_welcome'
+  | 'user_credentials'
+  | 'user_password_reset';
 
 export interface IEmailQueueJobDocument extends SqlDocumentMethods<IEmailQueueJobDocument> {
   kind: EmailQueueKind;
@@ -49,5 +51,7 @@ export const TRANSACTIONAL_KINDS: EmailQueueKind[] = [
   'lead_estrategia_dossier',
   'lead_resource_download',
   'lead_newsletter_welcome',
+  'user_credentials',
+  'user_password_reset',
 ];
 

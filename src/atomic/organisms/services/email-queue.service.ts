@@ -14,6 +14,7 @@ import {
   sendEstrategiaFiscalDossierEmail,
   sendDownloadableResourceEmail,
   sendNewsletterWelcomeEmail,
+  sendCredentials,
 } from './email.service.js';
 
 /**
@@ -72,6 +73,44 @@ export const enqueueLeadTransactional = async (input: {
     toName: input.toName,
     payload: input.payload ?? {},
     leadId: input.leadId,
+  } as Partial<IEmailQueueJobDocument>);
+};
+
+/**
+ * Encola credenciales de acceso de un usuario (alta por admin o reset de
+ * contraseña). Prioridad transaccional — se despacha antes que cualquier
+ * bulk. Guarda la tempPassword en el job porque el email la necesita.
+ */
+export const enqueueUserCredentials = async (input: {
+  kind: 'user_credentials' | 'user_password_reset';
+  toEmail: string;
+  toName: string;
+  tempPassword: string;
+  isNew?: boolean;
+}): Promise<void> => {
+  // Cuando hay un job pending del mismo kind + email, reemplazamos su
+  // tempPassword — asi la ultima contraseña generada es la que se envia.
+  const existing = await EmailQueueJob.find({
+    kind: input.kind,
+    toEmail: input.toEmail,
+    status: 'pending',
+  });
+  if (existing.length > 0) {
+    await EmailQueueJob.findByIdAndUpdate(existing[0]._id, {
+      tempPassword: input.tempPassword,
+      toName: input.toName,
+      payload: { isNew: input.isNew ?? true },
+      attempts: 0,
+      lastError: undefined,
+    });
+    return;
+  }
+  await EmailQueueJob.create({
+    kind: input.kind,
+    toEmail: input.toEmail,
+    toName: input.toName,
+    tempPassword: input.tempPassword,
+    payload: { isNew: input.isNew ?? true },
   } as Partial<IEmailQueueJobDocument>);
 };
 
@@ -138,6 +177,28 @@ const dispatchJob = async (job: IEmailQueueJobDocument): Promise<void> => {
       return;
     case 'lead_newsletter_welcome':
       await sendNewsletterWelcomeEmail({ email: job.toEmail, name: job.toName });
+      return;
+    case 'user_credentials':
+      // Creación de usuario por admin (o import): reenvía credenciales
+      // guardadas en tempPassword.
+      if (!job.tempPassword || !job.toName) {
+        throw new Error('user_credentials sin tempPassword/toName');
+      }
+      await sendCredentials(
+        { name: job.toName, email: job.toEmail },
+        job.tempPassword,
+        { isNew: Boolean(payload.isNew ?? true) },
+      );
+      return;
+    case 'user_password_reset':
+      if (!job.tempPassword || !job.toName) {
+        throw new Error('user_password_reset sin tempPassword/toName');
+      }
+      await sendCredentials(
+        { name: job.toName, email: job.toEmail },
+        job.tempPassword,
+        { isNew: false },
+      );
       return;
     default:
       throw new Error(`kind desconocido: ${(job as { kind?: string }).kind ?? ''}`);

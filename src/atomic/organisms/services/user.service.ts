@@ -7,7 +7,12 @@ import { hashPassword } from '../../atoms/helpers/hash.helper.js';
 import { env } from '../../../config/env.js';
 import { getEffectiveUserCourses, getUserOffers } from './offer.service.js';
 import { sendCredentials } from './email.service.js';
-import { enqueueMigrationWelcome } from './email-queue.service.js';
+import { enqueueMigrationWelcome, enqueueUserCredentials } from './email-queue.service.js';
+
+const IS_EMAIL_TRANSIENT_FAILURE = (err: unknown): boolean => {
+  const msg = String((err as { message?: string })?.message ?? err ?? '').toLowerCase();
+  return /daily user sending limit|sending limits|rate limit|too many|quota|4\.7\.0|5\.4\.5|econnrefused|etimedout|econnreset|greeting never received|invalid login|authentication/i.test(msg);
+};
 
 const makeError = (message: string, statusCode: number): Error =>
   Object.assign(new Error(message), { statusCode });
@@ -533,7 +538,22 @@ export const sendPasswordReset = async (userId: string) => {
   try {
     await sendCredentials({ name: user.name, email: user.email }, tempPassword, { isNew: false });
   } catch (err) {
-    console.warn('[sendPasswordReset] email failed:', (err as Error).message);
+    if (IS_EMAIL_TRANSIENT_FAILURE(err)) {
+      try {
+        await enqueueUserCredentials({
+          kind: 'user_password_reset',
+          toEmail: user.email,
+          toName: user.name,
+          tempPassword,
+          isNew: false,
+        });
+        console.warn(`[sendPasswordReset] SMTP saturado, credenciales encoladas para ${user.email}`);
+      } catch (queueErr) {
+        console.error(`[sendPasswordReset] no pude encolar credenciales para ${user.email}:`, (queueErr as Error).message);
+      }
+    } else {
+      console.warn('[sendPasswordReset] email failed:', (err as Error).message);
+    }
   }
 
   return { tempPassword: env.nodeEnv === 'development' ? tempPassword : undefined };

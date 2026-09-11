@@ -5,7 +5,13 @@ import { hashPassword, comparePassword, generateTempPassword } from '../../atoms
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../atoms/helpers/jwt.helper.js';
 import { AuthResult } from '../../../types/index.js';
 import { sendCredentials, sendPasswordReset } from './email.service.js';
+import { enqueueUserCredentials } from './email-queue.service.js';
 import { env } from '../../../config/env.js';
+
+const IS_EMAIL_TRANSIENT_FAILURE = (err: unknown): boolean => {
+  const msg = String((err as { message?: string })?.message ?? err ?? '').toLowerCase();
+  return /daily user sending limit|sending limits|rate limit|too many|quota|4\.7\.0|5\.4\.5|econnrefused|etimedout|econnreset|greeting never received|invalid login|authentication/i.test(msg);
+};
 
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hora, debe coincidir con el texto del correo
 
@@ -111,11 +117,28 @@ export const adminCreateUser = async ({
     mustChangePassword: true,
   });
 
-  // Envío de correo (best effort — no romper la creación si SMTP falla).
+  // Envío de correo con fallback a cola priorizada — si SMTP esta caido o
+  // sobre cap diario, el email se encola como transaccional y sale en
+  // cuanto haya cupo (respetando la reserva de 150 correos/dia).
   try {
     await sendCredentials({ name: user.name, email: user.email }, tempPassword, { isNew: true });
   } catch (err) {
-    console.warn('[adminCreateUser] email send failed:', (err as Error).message);
+    if (IS_EMAIL_TRANSIENT_FAILURE(err)) {
+      try {
+        await enqueueUserCredentials({
+          kind: 'user_credentials',
+          toEmail: user.email,
+          toName: user.name,
+          tempPassword,
+          isNew: true,
+        });
+        console.warn(`[adminCreateUser] SMTP saturado, credenciales encoladas para ${user.email}`);
+      } catch (queueErr) {
+        console.error(`[adminCreateUser] no pude encolar credenciales para ${user.email}:`, (queueErr as Error).message);
+      }
+    } else {
+      console.warn('[adminCreateUser] email send failed:', (err as Error).message);
+    }
   }
 
   return {
