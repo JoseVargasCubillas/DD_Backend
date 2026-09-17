@@ -425,6 +425,16 @@ const LEAD_REASON_LABELS: Record<string, string> = {
   other: 'Otro',
 };
 
+// Etiquetas legibles por cada recurso del Centro de Recursos. Se usan
+// para desglosar por archivo la clasificación en el panel admin (antes
+// todos aparecían bajo el paraguas "Centro de recursos" sin distinción).
+const RESOURCE_LABEL_BY_ID: Record<string, string> = {
+  'ingresos-exentos-isr': 'Centro Recursos · Ingresos exentos de ISR',
+  'si-tu-agenda-se-ve-asi': 'Centro Recursos · Si tu agenda se ve así',
+  'guia-para-blindarte-del-sat': 'Centro Recursos · Guía para blindarte del SAT',
+  'partes-relacionadas': 'Centro Recursos · Partes relacionadas',
+};
+
 const INCOMPLETE_PAYMENT_TAG_PREFIX = 'Pago incompleto: ';
 
 // Une la tabla `leads` (newsletter/media-kit/guias) con los usuarios que
@@ -480,8 +490,26 @@ export const listUnifiedLeads = async (): Promise<UnifiedLead[]> => {
   for (const lead of leads) {
     const email = normalizeEmail(lead.email);
     const at = String(lead.createdAt);
-    const reason = LEAD_REASON_LABELS[lead.source] ?? lead.source;
-    touch(email, lead.name || '', lead.phone, lead.source, reason, at, String(lead._id));
+    // Para el Centro de Recursos usamos un source compuesto
+    // `centro-recursos:<resourceId>` para que la clasificación distinga
+    // qué archivo específico descargó cada lead (antes todos caían en
+    // "Centro de recursos" sin identificador). El title del recurso
+    // queda como reason legible en la UI.
+    let source: string = lead.source;
+    let reason: string = LEAD_REASON_LABELS[lead.source] ?? lead.source;
+    if (lead.source === 'centro-recursos') {
+      const meta = (lead.meta ?? {}) as Record<string, unknown>;
+      const resourceId = typeof meta.resourceId === 'string' ? meta.resourceId.trim() : '';
+      const resourceTitle = typeof meta.deliveredResource === 'string' ? meta.deliveredResource.trim() : '';
+      if (resourceId) {
+        source = `centro-recursos:${resourceId}`;
+        reason = RESOURCE_LABEL_BY_ID[resourceId]
+          ?? (resourceTitle ? `Centro Recursos · ${resourceTitle}` : 'Centro de recursos');
+      } else if (resourceTitle) {
+        reason = `Centro Recursos · ${resourceTitle}`;
+      }
+    }
+    touch(email, lead.name || '', lead.phone, source, reason, at, String(lead._id));
   }
 
   for (const user of users) {
