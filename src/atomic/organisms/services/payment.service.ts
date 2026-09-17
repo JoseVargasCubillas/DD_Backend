@@ -53,7 +53,7 @@ const isStripeConfigured = (): boolean =>
 // único (p.ej. los 3 tiers de un mismo taller). El precio autoritativo vive
 // aquí, nunca se confía en el que manda el cliente.
 const EVENT_TICKET_CATALOG: Record<string, { title: string; price: number }> = {
-  'holding-masterclass-2026': { title: 'Holding · El legado de los empresarios', price: 4997 },
+  'holding-masterclass-2026': { title: 'Holding · El legado de los empresarios', price: 1997 },
   'estrategia-fiscal-online': { title: 'Taller de Estrategia Fiscal · Online', price: 4997 },
   'estrategia-fiscal-general': { title: 'Taller de Estrategia Fiscal · General CDMX', price: 7997 },
   'estrategia-fiscal-vip': { title: 'Taller de Estrategia Fiscal · VIP CDMX', price: 24997 },
