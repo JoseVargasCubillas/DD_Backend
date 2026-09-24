@@ -55,6 +55,28 @@ export const deletePackage = async (id: string): Promise<void> => {
   await Package.findByIdAndDelete(id);
 };
 
+// Agrega un curso publicado a todos los paquetes activos que aun no lo
+// contengan. Se llama desde course.service cuando se crea o publica un
+// curso, para que los suscriptores existentes (cuyo acceso se resuelve
+// leyendo pkg.courseIds en runtime, ver getUserCourseAccess) reciban el
+// curso nuevo sin que el admin tenga que editar cada paquete a mano.
+export const syncCourseIntoActivePackages = async (courseId: string): Promise<number> => {
+  const id = String(courseId || '').trim();
+  if (!id) return 0;
+  const pkgs = await Package.find({});
+  let touched = 0;
+  for (const pkg of pkgs) {
+    if (!pkg.isActive) continue;
+    const current = new Set((pkg.courseIds ?? []).map(String));
+    if (current.has(id)) continue;
+    current.add(id);
+    pkg.courseIds = Array.from(current);
+    await pkg.save();
+    touched += 1;
+  }
+  return touched;
+};
+
 // ── Asignación a usuario ─────────────────────────────────────
 export const assignPackageToUser = async (userId: string, packageId: string) => {
   const [user, pkg] = await Promise.all([User.findById(userId), Package.findById(packageId)]);

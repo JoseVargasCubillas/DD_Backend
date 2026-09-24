@@ -5,6 +5,7 @@ import { Module } from '../../molecules/models/module.model.js';
 import { Lesson } from '../../molecules/models/lesson.model.js';
 import { COURSE_STATUS } from '../../atoms/constants/status.constant.js';
 import { applyAccessToCourse } from './offer.service.js';
+import { syncCourseIntoActivePackages } from './package.service.js';
 
 const makeError = (msg: string, code: number): Error => Object.assign(new Error(msg), { statusCode: code });
 const makeSlug = (title: string): string => slugify(title, { lower: true, strict: true });
@@ -18,7 +19,13 @@ interface ListCoursesParams { page?: number; limit?: number; category?: string; 
 export const createCourse = async (data: CreateCourseInput): Promise<ICourseDocument> => {
   const slug = makeSlug(data.title);
   if (await Course.findOne({ slug })) throw makeError('Course slug already exists', 409);
-  return Course.create({ ...data, slug });
+  const course = await Course.create({ ...data, slug });
+  // Si el curso nace publicado, propagarlo a los paquetes activos para que
+  // los suscriptores existentes lo tengan sin intervencion manual.
+  if (course.status === COURSE_STATUS.PUBLISHED) {
+    await syncCourseIntoActivePackages(course._id).catch(() => undefined);
+  }
+  return course;
 };
 
 export const listCourses = async ({ page = 1, limit = 12, category, status, search, includeAll }: ListCoursesParams) => {
@@ -57,7 +64,13 @@ export const getCourseByIdWithModules = async (id: string) => {
 
 export const updateCourse = async (id: string, data: Partial<ICourseDocument>): Promise<ICourseDocument | null> => {
   if (data.title) (data as any).slug = makeSlug(data.title);
-  return Course.findByIdAndUpdate(id, data, { new: true, runValidators: true });
+  const updated = await Course.findByIdAndUpdate(id, data, { new: true, runValidators: true });
+  // Si tras la edicion el curso queda publicado, asegurar que este en todos
+  // los paquetes activos (idempotente: no duplica si ya estaba).
+  if (updated && updated.status === COURSE_STATUS.PUBLISHED) {
+    await syncCourseIntoActivePackages(updated._id).catch(() => undefined);
+  }
+  return updated;
 };
 
 export const deleteCourse = async (id: string): Promise<ICourseDocument> => {
