@@ -6,9 +6,17 @@ const makeError = (msg: string, code: number): Error =>
   Object.assign(new Error(msg), { statusCode: code });
 
 export const createEvent = async (data: Partial<IEventDocument>): Promise<IEventDocument> => {
-  const slug = slugify(data.title as string, { lower: true, strict: true });
+  // Respeta el slug que manda el admin (así un evento creado a partir de uno del
+  // calendario conserva su slug y no se duplica); si no viene, sale del título.
+  // Slugs repetidos (p.ej. varias ediciones del mismo taller) se desambiguan.
+  const base = slugify(String(data.slug || data.title || ''), { lower: true, strict: true }) || 'evento';
+  let slug = base;
+  for (let suffix = 2; await Event.findOne({ slug }); suffix += 1) slug = `${base}-${suffix}`;
   return Event.create({ ...data, slug });
 };
+
+export const deleteEvent = async (id: string): Promise<IEventDocument | null> =>
+  Event.findByIdAndDelete(id);
 
 export const listEvents = async ({
   page   = 1,

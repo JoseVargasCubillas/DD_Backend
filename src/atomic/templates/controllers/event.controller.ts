@@ -36,6 +36,14 @@ export const update: RequestHandler = async (req, res) => {
   } catch (err: any) { serverError(res, err); }
 };
 
+export const remove: RequestHandler = async (req, res) => {
+  try {
+    const event = await eventService.deleteEvent(req.params.id);
+    if (!event) { notFound(res, 'Evento no encontrado'); return; }
+    success(res, { id: req.params.id });
+  } catch (err: any) { serverError(res, err); }
+};
+
 export const register: RequestHandler = async (req, res) => {
   try {
     const event = await eventService.registerToEvent(req.params.id, String((req as any).user._id));
