@@ -55,7 +55,13 @@ export const getOrderReceipt = async (orderId: string) => {
 
   return {
     id: String(order._id),
-    items: order.items.map((item) => ({ title: item.title, price: item.price, quantity: item.quantity ?? 1 })),
+    items: order.items.map((item) => ({
+      title: item.title,
+      price: item.price,
+      quantity: item.quantity ?? 1,
+      eventDate: item.eventDate || '',
+      eventFormat: item.eventFormat || '',
+    })),
     subtotal: order.subtotal,
     tax: order.tax,
     shippingCost: order.shippingCost,

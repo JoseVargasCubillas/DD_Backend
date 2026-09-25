@@ -18,6 +18,7 @@ import { getShippingRate, getShippingRates, generateShippingLabel, ShippingPacka
 import { findOfferByIdentity, isOfferActive } from './offer.service.js';
 import { getCheckoutUser, CheckoutCustomer, markIncompletePayment, clearIncompletePayment } from './user.service.js';
 import { issueWhatsappInviteToken, buildWhatsappInviteUrl } from './whatsapp-invite.service.js';
+import { buildEventTicketTitle, formatEventDateLabel, formatEventFormatLabel, sanitizeTicketLabel } from '../../atoms/helpers/event-ticket.helper.js';
 import Stripe from 'stripe';
 
 interface OrderItemInput {
@@ -33,6 +34,8 @@ interface OrderItemInput {
   offerId?: string;
   packageId?: string;
   plan?: string;
+  eventDate?: string;
+  eventFormat?: string;
 }
 interface CheckoutContactInput { name?: string; email?: string; phone?: string }
 interface ShippingSelectionInput { carrier?: string; service?: string }
@@ -54,9 +57,11 @@ const isStripeConfigured = (): boolean =>
 // aquí, nunca se confía en el que manda el cliente.
 const EVENT_TICKET_CATALOG: Record<string, { title: string; price: number }> = {
   'holding-masterclass-2026': { title: 'Holding · El legado de los empresarios', price: 1997 },
+  // Sin ciudad en el título: la sede/plataforma y la fecha de la edición se
+  // agregan con buildEventTicketTitle (eventFormat / eventDate del ticket).
   'estrategia-fiscal-online': { title: 'Taller de Estrategia Fiscal · Online', price: 4997 },
-  'estrategia-fiscal-general': { title: 'Taller de Estrategia Fiscal · General CDMX', price: 7997 },
-  'estrategia-fiscal-vip': { title: 'Taller de Estrategia Fiscal · VIP CDMX', price: 24997 },
+  'estrategia-fiscal-general': { title: 'Taller de Estrategia Fiscal · General', price: 7997 },
+  'estrategia-fiscal-vip': { title: 'Taller de Estrategia Fiscal · VIP', price: 24997 },
 };
 
 const normalizeOrderItems = async (items: OrderItemInput[]): Promise<OrderItemInput[]> => {
@@ -89,7 +94,19 @@ const normalizeOrderItems = async (items: OrderItemInput[]): Promise<OrderItemIn
         const refId = String(item.refId || '');
         const catalogEntry = EVENT_TICKET_CATALOG[refId];
         if (catalogEntry) {
-          return { type: 'event', refId, title: catalogEntry.title, price: catalogEntry.price, quantity };
+          // El catálogo no tiene fecha ni sede: vienen del ticket (sólo texto,
+          // el precio sigue siendo el del catálogo).
+          const eventDate = sanitizeTicketLabel(item.eventDate);
+          const eventFormat = sanitizeTicketLabel(item.eventFormat);
+          return {
+            type: 'event',
+            refId,
+            title: buildEventTicketTitle(catalogEntry.title, eventFormat, eventDate),
+            price: catalogEntry.price,
+            quantity,
+            ...(eventDate && { eventDate }),
+            ...(eventFormat && { eventFormat }),
+          };
         }
 
         const event = (await Event.findById(refId)) ?? (await Event.findOne({ slug: refId }));
@@ -97,7 +114,18 @@ const normalizeOrderItems = async (items: OrderItemInput[]): Promise<OrderItemIn
         const price = Number(event.salePrice ?? event.price ?? 0);
         if (!(price > 0)) throw makeError('Este evento no tiene costo configurado', 400);
 
-        return { type: 'event', refId: String(event._id), title: event.title, price, quantity };
+        // Evento real en la DB: fecha y formato salen del propio evento, no del cliente.
+        const eventDate = formatEventDateLabel(event.startDate, event.endDate);
+        const eventFormat = formatEventFormatLabel(event.modality, event.location);
+        return {
+          type: 'event',
+          refId: String(event._id),
+          title: buildEventTicketTitle(event.title, eventFormat, eventDate),
+          price,
+          quantity,
+          ...(eventDate && { eventDate }),
+          ...(eventFormat && { eventFormat }),
+        };
       }
 
       if (ACADEMIA_ACCESS_TYPES.has(type)) {
@@ -232,6 +260,8 @@ const sendReceiptIfEventOrder = async (order: IOrderDocument): Promise<void> => 
       customerEmail: recipient?.email || 'Sin correo',
       customerPhone: recipient?.phone || '',
       itemsTitle: order.items.map((item) => item.title).join(', ') || 'Compra',
+      eventFormat: order.items.map((item) => item.eventFormat).filter(Boolean).join(', '),
+      eventDate: order.items.map((item) => item.eventDate).filter(Boolean).join(', '),
       amountPaid: order.total,
       receiptUrl: `${env.clientUrl}/recibo/pedido/${order._id}`,
     });
@@ -358,7 +388,22 @@ export const createPaymentIntent = async (
   return { clientSecret: intent.client_secret, orderId: order._id, subtotal, tax, shippingCost, total };
 };
 
+// El webhook de Stripe y POST /payments/confirm pueden llegar casi al mismo
+// tiempo para el mismo pago: sin este candado ambos verian la orden PENDING y
+// mandarian el recibo dos veces. Va por proceso (basta: ambos entran por aqui).
+const confirmingIntents = new Set<string>();
+
 export const confirmPayment = async (paymentIntentId: string): Promise<IOrderDocument | null> => {
+  if (confirmingIntents.has(paymentIntentId)) return Order.findOne({ stripePaymentIntentId: paymentIntentId });
+  confirmingIntents.add(paymentIntentId);
+  try {
+    return await confirmPaymentOnce(paymentIntentId);
+  } finally {
+    confirmingIntents.delete(paymentIntentId);
+  }
+};
+
+const confirmPaymentOnce = async (paymentIntentId: string): Promise<IOrderDocument | null> => {
   const order = await Order.findOne({ stripePaymentIntentId: paymentIntentId });
   if (!order) return null;
 
@@ -506,6 +551,17 @@ const grantAcademiaAccess = async (order: IOrderDocument): Promise<void> => {
 
     await Promise.all(emailsToSend);
   }
+};
+
+// Alternativa al webhook: el navegador avisa que Stripe ya cobro y aqui se
+// verifica contra Stripe (nunca se confia en el cliente) antes de confirmar.
+// Mismo camino que el webhook (confirmPayment es idempotente), asi el recibo
+// sale aunque el webhook no llegue — p.ej. en local sin `stripe listen`.
+export const confirmSucceededPayment = async (paymentIntentId: string): Promise<{ status: string }> => {
+  if (!/^pi_[A-Za-z0-9]+$/.test(paymentIntentId)) throw makeError('Pago inválido', 400);
+  const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+  if (intent.status === 'succeeded') await confirmPayment(paymentIntentId);
+  return { status: intent.status };
 };
 
 export const handleWebhook = async (event: Stripe.Event): Promise<void> => {

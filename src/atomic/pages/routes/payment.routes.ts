@@ -8,6 +8,7 @@ import { globalLimiter } from '../../molecules/middleware/rateLimit.middleware.j
 const router = Router();
 router.post('/webhook', express.raw({ type: 'application/json' }), paymentController.webhook);
 router.post('/intent', optionalAuthenticate, paymentController.createIntent);
+router.post('/confirm', globalLimiter, paymentController.confirmIntent);
 router.post('/shipping-quote', globalLimiter, paymentController.quoteShipping);
 router.use(authenticate);
 router.get('/admin/orders', requireAdmin, paymentController.getOrders);

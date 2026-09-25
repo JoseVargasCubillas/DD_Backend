@@ -29,6 +29,15 @@ export const quoteShipping: RequestHandler = async (req, res) => {
   }
 };
 
+export const confirmIntent: RequestHandler = async (req, res) => {
+  try {
+    const result = await paymentService.confirmSucceededPayment(String(req.body?.paymentIntentId || ''));
+    success(res, result);
+  } catch (err: any) {
+    err.statusCode === 400 ? badRequest(res, err.message) : serverError(res, err);
+  }
+};
+
 export const webhook: RequestHandler = async (req, res) => {
   const sig = req.headers['stripe-signature'] as string;
   let event;

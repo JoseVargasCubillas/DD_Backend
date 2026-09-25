@@ -22,6 +22,8 @@ export interface IEventDocument extends SqlDocumentMethods<IEventDocument> {
   attendees: string[];
   stripePriceId: string;
   isFeatured: boolean;
+  // Atender sólo por WhatsApp (sin landing). Sin definir = regla por defecto del frontend.
+  whatsappOnly?: boolean;
   agenda: { time: string; topic: string; speaker: string }[];
   createdAt: Date | string;
   updatedAt: Date | string;

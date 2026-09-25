@@ -358,6 +358,8 @@ export const sendEventOrderReceipt = (input: {
   const { name, email, order } = input;
   const orderId = String(order._id || order.id || '');
   const ticketTitle = order.items.map((i) => i.title).join(', ');
+  const eventFormat = order.items.map((i) => i.eventFormat).filter(Boolean).join(', ');
+  const eventDate = order.items.map((i) => i.eventDate).filter(Boolean).join(', ');
 
   return send(email, 'Tu pago fue confirmado - Diego Díaz', emailShell({
     eyebrow: 'Compra confirmada',
@@ -373,6 +375,8 @@ export const sendEventOrderReceipt = (input: {
         description: 'Tu lugar quedó reservado. Conserva esta información como referencia de tu compra.',
         rows: [
           ['Evento', ticketTitle],
+          ...(eventFormat ? [['Formato', eventFormat] as [string, string]] : []),
+          ...(eventDate ? [['Fecha', eventDate] as [string, string]] : []),
           ['Correo', email],
           ['Monto', formatMXN(order.total)],
           ...(order.shippingCarrier ? [['Paquetería', order.shippingCarrier.toUpperCase()] as [string, string]] : []),
@@ -404,6 +408,8 @@ export const sendOrderAdminNotice = (input: {
   customerEmail: string;
   customerPhone?: string;
   itemsTitle: string;
+  eventFormat?: string;
+  eventDate?: string;
   amountPaid: number;
   receiptUrl: string;
 }): Promise<unknown> =>
@@ -425,6 +431,8 @@ export const sendOrderAdminNotice = (input: {
         description: 'Datos del cliente y referencia de la orden para seguimiento administrativo.',
         rows: [
           ['Producto', input.itemsTitle],
+          ...(input.eventFormat ? [['Formato', input.eventFormat] as [string, string]] : []),
+          ...(input.eventDate ? [['Fecha', input.eventDate] as [string, string]] : []),
           ['Nombre', input.customerName],
           ['Correo', input.customerEmail],
           ['Teléfono', input.customerPhone || '—'],

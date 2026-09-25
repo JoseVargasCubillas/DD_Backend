@@ -15,6 +15,9 @@ interface OrderItem {
   offerId?: string;
   packageId?: string;
   plan?: string;
+  // Solo para type === 'event' — edición comprada (ver buildEventTicketTitle).
+  eventDate?: string;
+  eventFormat?: string;
 }
 
 export interface IOrderShippingAddress {
