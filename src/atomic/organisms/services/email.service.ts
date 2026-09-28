@@ -69,6 +69,7 @@ const emailShell = ({
   ctaUrl,
   preheader,
   headerCta,
+  heroImage,
   footerMeta,
   footerNote,
 }: {
@@ -82,6 +83,8 @@ const emailShell = ({
   ctaUrl?: string;
   preheader?: string;
   headerCta?: { label: string; url: string };
+  /** URL absoluta a un banner (JPG/PNG) mostrado entre el header y el hero oscuro. */
+  heroImage?: { url: string; alt: string };
   footerMeta?: { left: string; right: string };
   footerNote?: { tag: string; body: string };
 }): string => `
@@ -115,6 +118,13 @@ const emailShell = ({
                   </table>
                 </td>
               </tr>
+              ${heroImage
+                ? `<tr>
+                    <td style="padding:0;background:#050505;font-size:0;line-height:0;">
+                      <img src="${escapeHtml(heroImage.url)}" alt="${escapeHtml(heroImage.alt)}" width="720" style="display:block;width:100%;max-width:720px;height:auto;border:0;outline:none;text-decoration:none;" />
+                    </td>
+                  </tr>`
+                : ''}
               <tr>
                 <td style="background:#050505;color:#f7f1e8;padding:46px 34px 44px;">
                   <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
@@ -878,6 +888,10 @@ export const sendDownloadableResourceEmail = (
 // ═══════════════════════════════════════════════════════════════════════════
 
 const MASTERCLASS_YT_CHANNEL = 'https://www.youtube.com/@YoSoyDiegoDiaz';
+const MASTERCLASS_HERO_IMAGE = {
+  url: 'https://diegodiaz.mx/emails/masterclass-40hrs-hero.jpg',
+  alt: 'Masterclass gratuita — El costo invisible de las 40 horas · 28 sep 5:00 PM · YouTube @YoSoyDiegoDiaz',
+};
 
 const firstNameFrom = (raw?: string): string => {
   const first = String(raw || '').trim().split(/\s+/)[0] || '';
@@ -918,6 +932,7 @@ export const sendMasterclass40HrsInvite = (input: {
       ctaLabel: 'Entrar al canal de YouTube',
       ctaUrl: MASTERCLASS_YT_CHANNEL,
       preheader: 'Hoy 5:00 PM en vivo por YouTube — El costo invisible de las 40 horas.',
+      heroImage: MASTERCLASS_HERO_IMAGE,
       footerMeta: { left: '— Masterclass · Hoy 5:00 PM', right: 'En vivo por YouTube' },
     }),
   );
@@ -957,6 +972,7 @@ export const sendMasterclass40HrsReminder = (input: {
       ctaLabel: 'Entrar al canal de YouTube',
       ctaUrl: MASTERCLASS_YT_CHANNEL,
       preheader: 'En una hora comenzamos — El costo invisible de las 40 horas.',
+      heroImage: MASTERCLASS_HERO_IMAGE,
       footerMeta: { left: '— Faltan ~60 minutos', right: 'YouTube @YoSoyDiegoDiaz' },
     }),
   );
@@ -995,6 +1011,7 @@ export const sendMasterclass40HrsLive = (input: {
       ctaLabel: 'Ver ahora en YouTube',
       ctaUrl: input.liveUrl,
       preheader: 'Ya arrancamos — conéctate al live de YouTube ahora.',
+      heroImage: MASTERCLASS_HERO_IMAGE,
       footerMeta: { left: '— Transmisión en curso', right: 'YouTube @YoSoyDiegoDiaz' },
     }),
   );
