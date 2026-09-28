@@ -407,6 +407,12 @@ export interface UnifiedLead {
   phone?: string;
   sources: string[];
   reasons: string[];
+  /** Fuente (source) del primer registro cronologico de este email —
+   *  se usa en el desglose de conteo para no doble-contar leads que
+   *  descargaron mas de un recurso. */
+  primarySource: string;
+  /** Reason legible del primer registro cronologico. */
+  primaryReason: string;
   userId?: string;
   leadIds: string[];
   firstSeenAt: string;
@@ -469,7 +475,15 @@ export const listUnifiedLeads = async (): Promise<UnifiedLead[]> => {
       if (phone && !existing.phone) existing.phone = phone;
       if (leadId) existing.leadIds.push(leadId);
       if (userId) existing.userId = userId;
-      if (at < existing.firstSeenAt) existing.firstSeenAt = at;
+      if (at < existing.firstSeenAt) {
+        existing.firstSeenAt = at;
+        // Solo actualizamos la fuente primaria cuando llega una actividad
+        // ESTRICTAMENTE mas temprana que la que ya teniamos. Asi cada
+        // email se contabiliza en el desglose bajo su primera fuente
+        // real, sin importar el orden en que se procesan los registros.
+        existing.primarySource = source;
+        existing.primaryReason = reason;
+      }
       if (at > existing.lastActivityAt) existing.lastActivityAt = at;
       return;
     }
@@ -480,6 +494,8 @@ export const listUnifiedLeads = async (): Promise<UnifiedLead[]> => {
       phone,
       sources: [source],
       reasons: [reason],
+      primarySource: source,
+      primaryReason: reason,
       userId,
       leadIds: leadId ? [leadId] : [],
       firstSeenAt: at,
