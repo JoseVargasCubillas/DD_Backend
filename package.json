@@ -14,7 +14,8 @@
         "sync:courses-packages": "tsx src/scripts/sync-courses-into-packages.ts",
         "masterclass:invite": "tsx src/scripts/masterclass-40hrs-blast.ts invite",
         "masterclass:reminder": "tsx src/scripts/masterclass-40hrs-blast.ts reminder",
-        "masterclass:live": "tsx src/scripts/masterclass-40hrs-blast.ts live"
+        "masterclass:live": "tsx src/scripts/masterclass-40hrs-blast.ts live",
+        "report:sheet-sync": "tsx src/scripts/daily-sheet-report.ts"
     },
     "dependencies": {
         "bcryptjs": "^2.4.3",
@@ -24,6 +25,7 @@
         "express": "^4.18.2",
         "express-rate-limit": "^7.1.5",
         "express-validator": "^7.0.1",
+        "googleapis": "^182.0.0",
         "helmet": "^7.1.0",
         "jsonwebtoken": "^9.0.2",
         "morgan": "^1.10.0",
@@ -32,7 +34,8 @@
         "nodemailer": "^9.0.1",
         "read-excel-file": "^9.3.10",
         "slugify": "^1.6.6",
-        "stripe": "^14.7.0"
+        "stripe": "^14.7.0",
+        "write-excel-file": "^4.1.1"
     },
     "devDependencies": {
         "@types/bcryptjs": "^2.4.6",
