@@ -25,7 +25,7 @@
 import '../config/load-env.js';
 import fs from 'fs';
 import path from 'path';
-import XLSX from 'xlsx';
+import readXlsxFile from 'read-excel-file/node';
 
 import { connectDB } from '../config/database.js';
 import { Lead } from '../atomic/molecules/models/lead.model.js';
@@ -104,10 +104,18 @@ const normalizePhone = (raw: unknown): string => {
   return digits;
 };
 
-const readXlsx = (file: string): Record<string, unknown>[] => {
-  const wb = XLSX.readFile(file);
-  const sh = wb.Sheets[wb.SheetNames[0]];
-  return XLSX.utils.sheet_to_json(sh);
+const readXlsx = async (file: string): Promise<Record<string, unknown>[]> => {
+  const rows = (await readXlsxFile(file)) as unknown as unknown[][];
+  if (!rows.length) return [];
+  const [header, ...body] = rows;
+  const keys = (header ?? []).map((h) => String(h ?? ''));
+  return body.map((row) => {
+    const obj: Record<string, unknown> = {};
+    keys.forEach((key, idx) => {
+      if (key) obj[key] = row[idx];
+    });
+    return obj;
+  });
 };
 
 const firstNameFrom = (raw: string): string => {
@@ -172,12 +180,12 @@ const HUBSPOT_COL = {
   email: 'Correo',
 };
 
-const loadHubspot = (
+const loadHubspot = async (
   file: string,
   segment: Segment,
-): Contact[] => {
+): Promise<Contact[]> => {
   if (!fs.existsSync(file)) return [];
-  const rows = readXlsx(file);
+  const rows = await readXlsx(file);
   const out: Contact[] = [];
   for (const row of rows) {
     const email = normalizeEmail(row[HUBSPOT_COL.email]);
@@ -337,8 +345,8 @@ const main = async () => {
   const holdingFile = path.join(CAMPAIGN_DIR, 'bd-holding.xlsx');
 
   const [ef, holding, internal] = await Promise.all([
-    Promise.resolve(loadHubspot(efFile, 'hubspot-ef-op')),
-    Promise.resolve(loadHubspot(holdingFile, 'hubspot-holding')),
+    loadHubspot(efFile, 'hubspot-ef-op'),
+    loadHubspot(holdingFile, 'hubspot-holding'),
     loadInternalContacts(),
   ]);
 
