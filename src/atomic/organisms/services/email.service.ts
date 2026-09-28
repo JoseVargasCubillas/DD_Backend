@@ -870,4 +870,132 @@ export const sendDownloadableResourceEmail = (
     }),
   );
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Masterclass "El costo invisible de las 40 horas" — 28 sep 2026 · 5:00 PM
+// Tres correos: invitacion (mañana del evento), recordatorio (1h antes) y
+// aviso "en vivo ahora" (link real del stream). Todos apuntan al canal
+// oficial YouTube: https://www.youtube.com/@YoSoyDiegoDiaz
+// ═══════════════════════════════════════════════════════════════════════════
 
+const MASTERCLASS_YT_CHANNEL = 'https://www.youtube.com/@YoSoyDiegoDiaz';
+
+const firstNameFrom = (raw?: string): string => {
+  const first = String(raw || '').trim().split(/\s+/)[0] || '';
+  return first ? first.charAt(0).toUpperCase() + first.slice(1).toLowerCase() : '';
+};
+
+export const sendMasterclass40HrsInvite = (input: {
+  email: string;
+  name?: string;
+}): Promise<unknown> => {
+  const first = firstNameFrom(input.name);
+  const salute = first ? `${first},` : 'Empresario,';
+  return send(
+    input.email,
+    '🚨 Hoy · Masterclass GRATUITA: El costo invisible de las 40 horas',
+    emailShell({
+      eyebrow: 'Masterclass gratuita · Hoy 5:00 PM',
+      badge: 'Hoy · En vivo',
+      title: `El costo invisible<br/>de las ${accent('40 horas.')}`,
+      lead: `${salute} ¿estás preparado para el cambio de 48 a 40 horas laborales? Hoy, en vivo por YouTube, hablamos de cómo hacer que esta transición funcione —y cómo mantener, incluso mejorar, la productividad apoyándote en las herramientas adecuadas.`,
+      content: `
+        <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
+          En esta masterclass abrimos el tema con datos reales: qué se rompe con la reducción de jornada, dónde está el costo que casi nadie mide, y qué palancas concretas te permiten sostener la operación sin desangrar el margen.
+        </p>
+        <div style="margin:0 0 8px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">— Reserva tu lugar</div>
+        <ul style="margin:0 0 22px;padding:0 0 0 18px;color:#5f574f;font-size:14px;line-height:1.75;">
+          <li><strong>Hoy · 5:00 PM</strong> (hora Ciudad de México).</li>
+          <li>100% gratuita, en vivo por YouTube.</li>
+          <li>Activa el recordatorio en el canal para no perderla.</li>
+        </ul>
+        <div style="margin:22px 0 8px;">
+          ${linkButton({ label: 'Entrar al canal y activar recordatorio', detail: '@YoSoyDiegoDiaz', url: MASTERCLASS_YT_CHANNEL, dark: true })}
+        </div>
+        <p style="margin:20px 0 0;color:#5f574f;font-size:14px;line-height:1.7;">
+          Nos vemos en la masterclass.
+        </p>
+      `,
+      ctaLabel: 'Entrar al canal de YouTube',
+      ctaUrl: MASTERCLASS_YT_CHANNEL,
+      preheader: 'Hoy 5:00 PM en vivo por YouTube — El costo invisible de las 40 horas.',
+      footerMeta: { left: '— Masterclass · Hoy 5:00 PM', right: 'En vivo por YouTube' },
+    }),
+  );
+};
+
+export const sendMasterclass40HrsReminder = (input: {
+  email: string;
+  name?: string;
+}): Promise<unknown> => {
+  const first = firstNameFrom(input.name);
+  const salute = first ? `${first},` : 'Empresario,';
+  return send(
+    input.email,
+    '⏰ Falta 1 hora · Masterclass "El costo invisible de las 40 horas"',
+    emailShell({
+      eyebrow: 'Masterclass · Falta 1 hora',
+      badge: 'Empieza a las 5:00 PM',
+      title: `Falta una hora<br/>para ${accent('empezar.')}`,
+      lead: `${salute} en una hora comenzamos la masterclass gratuita "El costo invisible de las 40 horas". Un tema que cada vez cobra mayor relevancia: cómo hacer que la reducción de 48 a 40 horas laborales funcione sin perder productividad.`,
+      content: `
+        <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
+          La clave está en las herramientas que utilizamos y en cómo las aplicamos. Vamos a repasar el marco completo para que salgas con acciones concretas para tu empresa.
+        </p>
+        <div style="margin:0 0 8px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">— Datos del stream</div>
+        <ul style="margin:0 0 22px;padding:0 0 0 18px;color:#5f574f;font-size:14px;line-height:1.75;">
+          <li><strong>Hoy · 5:00 PM</strong> (hora Ciudad de México).</li>
+          <li>En vivo por YouTube — canal <strong>@YoSoyDiegoDiaz</strong>.</li>
+          <li>Ingresa unos minutos antes para no perderte la apertura.</li>
+        </ul>
+        <div style="margin:22px 0 8px;">
+          ${linkButton({ label: 'Ir al canal y prepararme', detail: 'Faltan ~60 min', url: MASTERCLASS_YT_CHANNEL, dark: true })}
+        </div>
+        <p style="margin:20px 0 0;color:#5f574f;font-size:14px;line-height:1.7;">
+          🔥 Nos vemos en una hora.
+        </p>
+      `,
+      ctaLabel: 'Entrar al canal de YouTube',
+      ctaUrl: MASTERCLASS_YT_CHANNEL,
+      preheader: 'En una hora comenzamos — El costo invisible de las 40 horas.',
+      footerMeta: { left: '— Faltan ~60 minutos', right: 'YouTube @YoSoyDiegoDiaz' },
+    }),
+  );
+};
+
+export const sendMasterclass40HrsLive = (input: {
+  email: string;
+  name?: string;
+  liveUrl: string;
+}): Promise<unknown> => {
+  const first = firstNameFrom(input.name);
+  const salute = first ? `${first},` : 'Empresario,';
+  return send(
+    input.email,
+    '🔴 EN VIVO ahora · El costo invisible de las 40 horas',
+    emailShell({
+      eyebrow: 'Masterclass · En vivo ahora',
+      badge: '● Live',
+      title: `Ya estamos<br/>${accent('en vivo.')}`,
+      lead: `${salute} arrancamos la masterclass "El costo invisible de las 40 horas". Conéctate ahora — te esperamos del otro lado.`,
+      content: `
+        <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
+          Estamos hablando de cómo hacer que la reducción de 48 a 40 horas laborales funcione en tu empresa sin perder productividad. Entra ahora para no perderte la parte central.
+        </p>
+        <div style="margin:22px 0 8px;">
+          ${linkButton({ label: '🔴 Conectarme al Live ahora', detail: 'YouTube · @YoSoyDiegoDiaz', url: input.liveUrl, dark: true })}
+        </div>
+        <p style="margin:18px 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
+          Si el botón no abre, copia y pega este enlace en tu navegador:<br/>
+          <span style="word-break:break-all;color:#111;">${escapeHtml(input.liveUrl)}</span>
+        </p>
+        <p style="margin:20px 0 0;color:#5f574f;font-size:14px;line-height:1.7;">
+          ✅ Recuerda seguir el canal oficial y activar las notificaciones para no perderte ningún detalle de las próximas transmisiones.
+        </p>
+      `,
+      ctaLabel: 'Ver ahora en YouTube',
+      ctaUrl: input.liveUrl,
+      preheader: 'Ya arrancamos — conéctate al live de YouTube ahora.',
+      footerMeta: { left: '— Transmisión en curso', right: 'YouTube @YoSoyDiegoDiaz' },
+    }),
+  );
+};

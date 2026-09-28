@@ -11,7 +11,10 @@
         "seed:users": "tsx src/scripts/seed-users.ts",
         "seed:academy": "tsx src/scripts/seed-academy-offers.ts",
         "seed:books": "tsx src/scripts/seed-books.ts",
-        "sync:courses-packages": "tsx src/scripts/sync-courses-into-packages.ts"
+        "sync:courses-packages": "tsx src/scripts/sync-courses-into-packages.ts",
+        "masterclass:invite": "tsx src/scripts/masterclass-40hrs-blast.ts invite",
+        "masterclass:reminder": "tsx src/scripts/masterclass-40hrs-blast.ts reminder",
+        "masterclass:live": "tsx src/scripts/masterclass-40hrs-blast.ts live"
     },
     "dependencies": {
         "bcryptjs": "^2.4.3",
