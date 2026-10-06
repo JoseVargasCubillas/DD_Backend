@@ -19,6 +19,8 @@ import { findOfferByIdentity, isOfferActive } from './offer.service.js';
 import { getCheckoutUser, CheckoutCustomer, markIncompletePayment, clearIncompletePayment } from './user.service.js';
 import { issueWhatsappInviteToken, buildWhatsappInviteUrl } from './whatsapp-invite.service.js';
 import { buildEventTicketTitle, formatEventDateLabel, formatEventFormatLabel, sanitizeTicketLabel } from '../../atoms/helpers/event-ticket.helper.js';
+import { createTicketsForOrder, renderTicketQrBuffer } from './ticket.service.js';
+import { buildTicketUrl } from '../../atoms/helpers/ticket-token.helper.js';
 import Stripe from 'stripe';
 
 interface OrderItemInput {
@@ -243,8 +245,31 @@ const sendReceiptIfEventOrder = async (order: IOrderDocument): Promise<void> => 
       : null;
 
   if (recipient) {
+    // Boletos QR: uno por asiento de cada item de evento. Idempotente por
+    // orden, así que reenviar el recibo no duplica boletos.
+    let ticketCards: NonNullable<Parameters<typeof sendEventOrderReceipt>[0]['tickets']> = [];
     try {
-      await sendEventOrderReceipt({ name: recipient.name, email: recipient.email, order });
+      const tickets = await createTicketsForOrder(order, recipient);
+      ticketCards = await Promise.all(tickets.map(async (t) => ({
+        folio: t.folio,
+        attendeeName: t.attendeeName,
+        eventTitle: t.eventTitle,
+        eventDate: t.eventDate,
+        eventFormat: t.eventFormat,
+        amount: t.amount,
+        seatIndex: t.seatIndex,
+        seatTotal: t.seatTotal,
+        purchasedAt: t.purchasedAt,
+        url: buildTicketUrl(t.folio, t.signature),
+        qrCid: `qr-${t.folio.toLowerCase()}@diegodiaz.mx`,
+        qrPng: await renderTicketQrBuffer(t),
+      })));
+    } catch (err) {
+      console.warn('[createTicketsForOrder] failed:', (err as Error).message);
+    }
+
+    try {
+      await sendEventOrderReceipt({ name: recipient.name, email: recipient.email, order, tickets: ticketCards });
     } catch (err) {
       console.warn('[sendReceiptIfEventOrder] failed:', (err as Error).message);
     }

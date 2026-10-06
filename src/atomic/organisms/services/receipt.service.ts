@@ -4,6 +4,8 @@ import { Offer } from '../../molecules/models/offer.model.js';
 import { Order } from '../../molecules/models/order.model.js';
 import { ORDER_STATUS } from '../../atoms/constants/status.constant.js';
 import { getPaymentSummary } from './payment.service.js';
+import { getTicketsForOrder } from './ticket.service.js';
+import { buildTicketUrl } from '../../atoms/helpers/ticket-token.helper.js';
 
 // Recibo publico (sin login) enlazado desde el correo de confirmacion de
 // suscripcion. Se muestra solo si hubo al menos un pago confirmado por Stripe
@@ -53,8 +55,16 @@ export const getOrderReceipt = async (orderId: string) => {
     customerEmail = user?.email || customerEmail;
   }
 
+  const tickets = await getTicketsForOrder(String(order._id));
+
   return {
     id: String(order._id),
+    tickets: tickets.map((t) => ({
+      folio: t.folio,
+      url: buildTicketUrl(t.folio, t.signature),
+      attendeeName: t.attendeeName,
+      status: t.status,
+    })),
     items: order.items.map((item) => ({
       title: item.title,
       price: item.price,

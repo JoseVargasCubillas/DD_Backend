@@ -42,6 +42,8 @@ interface MailAttachment {
   path?: string;
   content?: Buffer;
   contentType?: string;
+  // Content-ID para imágenes inline (<img src="cid:...">).
+  cid?: string;
 }
 
 const sendWithAttachments = (
@@ -357,32 +359,113 @@ export const sendOrderConfirmation = (user: IUserDocument, order: IOrderDocument
     preheader: 'Tu compra fue confirmada correctamente.',
   }));
 
+// Tarjeta de boleto para el correo: QR inline (cid) + folio + datos del
+// asistente, con línea troquelada que separa el talón. Diseñada para que se
+// vea bien en móvil y al imprimir.
+export interface ReceiptTicketCard {
+  folio: string;
+  attendeeName: string;
+  eventTitle: string;
+  eventDate: string;
+  eventFormat: string;
+  amount: number;
+  seatIndex: number;
+  seatTotal: number;
+  purchasedAt: Date | string;
+  url: string;
+  qrCid: string;
+}
+
+const ticketCard = (t: ReceiptTicketCard, orderRef: string): string => `
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 18px;border:1px solid #ded6ca;background:#fffdf8;">
+    <tr>
+      <td style="padding:0;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#17130f;">
+          <tr>
+            <td style="padding:16px 22px;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:#b6aa9a;">&#8212; Boleto de acceso${t.seatTotal > 1 ? ` · ${t.seatIndex} de ${t.seatTotal}` : ''}</td>
+            <td align="right" style="padding:16px 22px;font-family:'Courier New',Courier,monospace;font-size:13px;letter-spacing:2px;color:#f7f1e8;">${escapeHtml(t.folio)}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:0;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+          <tr>
+            <td valign="top" style="padding:22px 22px 18px;">
+              <div style="font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">Asistente</div>
+              <div style="margin:4px 0 14px;font-family:Georgia,'Times New Roman',serif;font-size:22px;line-height:1.15;color:#17130f;">${escapeHtml(t.attendeeName)}</div>
+              <div style="font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">Evento</div>
+              <div style="margin:4px 0 12px;font-size:14px;font-weight:700;line-height:1.4;color:#17130f;">${escapeHtml(t.eventTitle)}</div>
+              <table role="presentation" cellspacing="0" cellpadding="0">
+                ${t.eventDate ? `<tr><td style="padding:0 18px 8px 0;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#9b9185;">Fecha</td><td style="padding:0 0 8px;font-size:13px;color:#17130f;">${escapeHtml(t.eventDate)}</td></tr>` : ''}
+                ${t.eventFormat ? `<tr><td style="padding:0 18px 8px 0;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#9b9185;">Formato</td><td style="padding:0 0 8px;font-size:13px;color:#17130f;">${escapeHtml(t.eventFormat)}</td></tr>` : ''}
+                <tr><td style="padding:0 18px 8px 0;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#9b9185;">Compra</td><td style="padding:0 0 8px;font-size:13px;color:#17130f;">${escapeHtml(formatDateTimeEs(t.purchasedAt))}</td></tr>
+                <tr><td style="padding:0 18px 8px 0;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#9b9185;">Monto</td><td style="padding:0 0 8px;font-size:13px;font-weight:700;color:#17130f;">${escapeHtml(formatMXN(t.amount))}</td></tr>
+                <tr><td style="padding:0 18px 0 0;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#9b9185;">Orden</td><td style="font-size:12px;color:#5f574f;">${escapeHtml(orderRef)}</td></tr>
+              </table>
+            </td>
+            <td valign="middle" width="190" style="padding:18px 20px;border-left:2px dashed #ded6ca;text-align:center;background:#f7f2ea;">
+              <img src="cid:${escapeHtml(t.qrCid)}" width="150" height="150" alt="QR ${escapeHtml(t.folio)}" style="display:block;margin:0 auto;width:150px;height:150px;background:#ffffff;padding:6px;border:1px solid #ded6ca;" />
+              <div style="margin-top:10px;font-size:9px;letter-spacing:2px;text-transform:uppercase;color:#9b9185;line-height:1.5;">Escanear en<br/>la entrada</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:0;">
+        <a href="${escapeHtml(t.url)}" style="display:block;text-decoration:none;background:#fffdf8;border-top:1px solid #ded6ca;">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+            <tr>
+              <td style="padding:14px 22px;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#17130f;">Ver mi boleto</td>
+              <td align="right" style="padding:14px 22px;font-family:Georgia,'Times New Roman',serif;font-style:italic;font-size:13px;color:#8b8175;">guardar o imprimir &#8594;</td>
+            </tr>
+          </table>
+        </a>
+      </td>
+    </tr>
+  </table>
+`;
+
 // Recibo de compra de un ticket de evento — mismo layout que
 // sendAcademiaOrderReceipt, pero sin cuenta de por medio:
 // no hay CTA de "ir a mi cuenta" ni credenciales, solo el comprobante.
+// Si la orden generó boletos, cada uno va como tarjeta con su QR inline.
 export const sendEventOrderReceipt = (input: {
   name: string;
   email: string;
   order: IOrderDocument;
+  tickets?: Array<ReceiptTicketCard & { qrPng: Buffer }>;
 }): Promise<unknown> => {
-  const { name, email, order } = input;
+  const { name, email, order, tickets = [] } = input;
   const orderId = String(order._id || order.id || '');
   const ticketTitle = order.items.map((i) => i.title).join(', ');
   const eventFormat = order.items.map((i) => i.eventFormat).filter(Boolean).join(', ');
   const eventDate = order.items.map((i) => i.eventDate).filter(Boolean).join(', ');
+  const orderRef = order.stripePaymentIntentId || orderId;
+  const hasTickets = tickets.length > 0;
 
-  return send(email, 'Tu pago fue confirmado - Diego Díaz', emailShell({
+  const html = emailShell({
     eyebrow: 'Compra confirmada',
     badge: 'Pagado',
-    title: `Tu pago<br/>fue ${accent('confirmado.')}`,
-    lead: `Hola ${name}, gracias por tu compra.`,
+    title: hasTickets ? `Tu lugar está<br/>${accent('confirmado.')}` : `Tu pago<br/>fue ${accent('confirmado.')}`,
+    lead: hasTickets
+      ? `Hola ${name}, gracias por tu compra. ${tickets.length === 1 ? 'Este es tu boleto' : `Estos son tus ${tickets.length} boletos`} de acceso: presenta el código QR en la entrada del evento.`
+      : `Hola ${name}, gracias por tu compra.`,
     content: `
       ${amountBand('Monto pagado', formatMXN(order.total))}
+      ${hasTickets ? `
+        <div style="margin:0 0 14px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">&#8212; ${tickets.length === 1 ? 'Tu boleto' : 'Tus boletos'}</div>
+        ${tickets.map((t) => ticketCard(t, orderRef)).join('')}
+      ` : ''}
       ${confirmationPanel({
         label: 'Compra confirmada',
         tag: 'Ticket · pago único',
         value: accent(ticketTitle),
-        description: 'Tu lugar quedó reservado. Conserva esta información como referencia de tu compra.',
+        description: hasTickets
+          ? 'Tu lugar quedó reservado. El QR de cada boleto es único e intransferible; también puedes abrirlo desde el enlace "Ver mi boleto".'
+          : 'Tu lugar quedó reservado. Conserva esta información como referencia de tu compra.',
         rows: [
           ['Evento', ticketTitle],
           ...(eventFormat ? [['Formato', eventFormat] as [string, string]] : []),
@@ -391,7 +474,7 @@ export const sendEventOrderReceipt = (input: {
           ['Monto', formatMXN(order.total)],
           ...(order.shippingCarrier ? [['Paquetería', order.shippingCarrier.toUpperCase()] as [string, string]] : []),
           ...(order.shippingTrackingNumber ? [['Número de guía', order.shippingTrackingNumber] as [string, string]] : []),
-          ['Referencia', order.stripePaymentIntentId || orderId],
+          ['Referencia', orderRef],
         ],
       })}
       <div style="margin-top:22px;">
@@ -405,8 +488,22 @@ export const sendEventOrderReceipt = (input: {
       left: `Orden #${orderId.slice(-8).toUpperCase()}`,
       right: formatDateTimeEs(new Date()),
     },
-    preheader: 'Tu pago fue confirmado correctamente.',
-  }));
+    preheader: hasTickets ? 'Tu boleto con QR de acceso está listo.' : 'Tu pago fue confirmado correctamente.',
+  });
+
+  const subject = hasTickets ? 'Tu boleto de acceso - Diego Díaz' : 'Tu pago fue confirmado - Diego Díaz';
+  if (!hasTickets) return send(email, subject, html);
+  return sendWithAttachments(
+    email,
+    subject,
+    html,
+    tickets.map((t) => ({
+      filename: `boleto-${t.folio}.png`,
+      content: t.qrPng,
+      contentType: 'image/png',
+      cid: t.qrCid,
+    })),
+  );
 };
 
 // Aviso interno para CUALQUIER compra que no sea de Academia (libros,
@@ -468,8 +565,11 @@ export const sendOrderAdminNotice = (input: {
 const formatDateEs = (date: Date): string =>
   new Intl.DateTimeFormat('es-MX', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'America/Mexico_City' }).format(date);
 
-const formatDateTimeEs = (date: Date): string =>
-  `${new Intl.DateTimeFormat('es-MX', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Mexico_City' }).format(date)} CDMX`;
+const formatDateTimeEs = (value: Date | string): string => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${new Intl.DateTimeFormat('es-MX', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Mexico_City' }).format(date)} CDMX`;
+};
 
 // Academia ya no crea Subscriptions de Stripe (ver grantAcademiaAccess en
 // payment.service.ts) — el pago es un Order de un solo cobro y la renovacion

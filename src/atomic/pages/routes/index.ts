@@ -19,6 +19,7 @@ import receiptRoutes from './receipt.routes.js';
 import academiaRoutes from './academia.routes.js';
 import analyticsRoutes from './analytics.routes.js';
 import whatsappRoutes from './whatsapp.routes.js';
+import ticketRoutes from './ticket.routes.js';
 
 export const apiRoutes = Router();
 
@@ -43,3 +44,4 @@ apiRoutes.use('/receipts', receiptRoutes);
 apiRoutes.use('/academia', academiaRoutes);
 apiRoutes.use('/analytics', analyticsRoutes);
 apiRoutes.use('/whatsapp', whatsappRoutes);
+apiRoutes.use('/tickets', ticketRoutes);
