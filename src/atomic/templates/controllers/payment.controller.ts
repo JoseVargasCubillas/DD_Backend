@@ -2,7 +2,7 @@ import { RequestHandler } from 'express';
 import * as paymentService from '../../organisms/services/payment.service.js';
 import { stripe } from '../../../config/stripe.js';
 import { env } from '../../../config/env.js';
-import { success, badRequest, serverError } from '../../atoms/helpers/response.helper.js';
+import { success, badRequest, notFound, serverError } from '../../atoms/helpers/response.helper.js';
 
 export const createIntent: RequestHandler = async (req, res) => {
   try {
@@ -65,5 +65,13 @@ export const getOrders: RequestHandler = async (req, res) => {
       ? await paymentService.getAllOrders()
       : await paymentService.getOrdersByUser(String(user._id));
     success(res, orders);
+  } catch (err: any) { serverError(res, err); }
+};
+
+export const deleteOrder: RequestHandler = async (req, res) => {
+  try {
+    const deleted = await paymentService.deleteOrder(String(req.params.id));
+    if (!deleted) return notFound(res, 'Transacción no encontrada');
+    success(res, { id: String(deleted._id) });
   } catch (err: any) { serverError(res, err); }
 };

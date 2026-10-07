@@ -12,5 +12,6 @@ router.post('/confirm', globalLimiter, paymentController.confirmIntent);
 router.post('/shipping-quote', globalLimiter, paymentController.quoteShipping);
 router.use(authenticate);
 router.get('/admin/orders', requireAdmin, paymentController.getOrders);
+router.delete('/admin/orders/:id', requireAdmin, paymentController.deleteOrder);
 router.get('/orders', paymentController.getOrders);
 export default router;

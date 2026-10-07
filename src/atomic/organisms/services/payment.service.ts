@@ -20,6 +20,7 @@ import { getCheckoutUser, CheckoutCustomer, markIncompletePayment, clearIncomple
 import { issueWhatsappInviteToken, buildWhatsappInviteUrl } from './whatsapp-invite.service.js';
 import { buildEventTicketTitle, formatEventDateLabel, formatEventFormatLabel, sanitizeTicketLabel } from '../../atoms/helpers/event-ticket.helper.js';
 import { createTicketsForOrder, renderTicketQrBuffer } from './ticket.service.js';
+import { EventTicket } from '../../molecules/models/event-ticket.model.js';
 import { buildTicketUrl } from '../../atoms/helpers/ticket-token.helper.js';
 import Stripe from 'stripe';
 
@@ -601,3 +602,13 @@ export const getOrdersByUser = async (userId: string): Promise<IOrderDocument[]>
 
 export const getAllOrders = async (): Promise<IOrderDocument[]> =>
   Order.find({}).sort('-createdAt');
+
+// Borra una transaccion (p. ej. pruebas) junto con sus boletos QR.
+export const deleteOrder = async (orderId: string): Promise<IOrderDocument | null> => {
+  const order = await Order.findById(orderId);
+  if (!order) return null;
+  const tickets = await EventTicket.find({ orderId });
+  await Promise.all(tickets.map((t) => EventTicket.findByIdAndDelete(String(t._id))));
+  await Order.findByIdAndDelete(orderId);
+  return order;
+};
