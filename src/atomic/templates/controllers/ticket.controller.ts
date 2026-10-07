@@ -24,6 +24,9 @@ export const getTicketQr: RequestHandler = async (req, res) => {
     if (!png) return notFound(res, 'Boleto no encontrado');
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'private, max-age=86400');
+    // El frontend vive en otro origen (diegodiaz.mx vs api.); helmet pone
+    // CORP same-origin por defecto y el navegador bloquearía la imagen.
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.send(png);
   } catch (err: any) {
     serverError(res, err);
