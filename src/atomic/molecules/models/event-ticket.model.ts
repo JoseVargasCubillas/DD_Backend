@@ -37,6 +37,8 @@ export interface IEventTicketDocument extends SqlDocumentMethods<IEventTicketDoc
   // Fila (1-based) en la pestaña del Google Sheet de asistencia, si se sincronizó.
   sheetRow: number | null;
   sheetTab: string;
+  // 'General' | 'VIP' cuando el boleto viene de un negocio de HubSpot.
+  ticketType?: string;
   createdAt: Date | string;
   updatedAt: Date | string;
 }

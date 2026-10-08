@@ -12,6 +12,25 @@ const first = (...keys: string[]): string | undefined => {
   return undefined;
 };
 
+// "SEF CDMX=estrategia-fiscal-cdmx;SEF MTY=estrategia-fiscal-monterrey" ->
+// { 'sef cdmx': ['estrategia fiscal cdmx'], ... }. Equivalencia entre el nombre
+// del producto de HubSpot y un fragmento del slug/título del Event en la DB.
+const parseAliases = (raw: string): Record<string, string[]> => {
+  const norm = (v: string): string =>
+    v.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const out: Record<string, string[]> = {};
+  for (const pair of raw.split(';')) {
+    const [name, ...rest] = pair.split('=');
+    const key = norm(name ?? '');
+    const value = norm(rest.join('='));
+    if (key && value) out[key] = [...(out[key] ?? []), value];
+  }
+  return out;
+};
+
+const DEFAULT_EVENT_ALIASES =
+  'SEF CDMX=estrategia-fiscal-cdmx;SEF MTY=estrategia-fiscal-monterrey;SEF GDL=estrategia-fiscal-guadalajara';
+
 export const env = {
   port: Number(process.env.PORT) || 5000,
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -69,6 +88,19 @@ export const env = {
       state: process.env.ENVIA_ORIGIN_STATE ?? '',
       postalCode: process.env.ENVIA_ORIGIN_POSTAL_CODE ?? '',
     },
+  },
+  // Polling de negocios ganados en HubSpot -> boletos QR (hubspot.service.ts).
+  hubspot: {
+    token: process.env.HUBSPOT_TOKEN ?? '',
+    syncEnabled: process.env.HUBSPOT_SYNC_ENABLED !== 'false',
+    pipelineId: process.env.HUBSPOT_PIPELINE_ID ?? 'default',
+    wonStageId: process.env.HUBSPOT_WON_STAGE_ID ?? 'closedwon',
+    pollIntervalMs: Math.max(60, Number(process.env.HUBSPOT_POLL_INTERVAL_SEC) || 300) * 1000,
+    // Propiedad del objeto Producto que indica Presencial/Online (opcional).
+    modalityProperty: process.env.HUBSPOT_PRODUCT_MODALITY_PROPERTY ?? 'modalidad',
+    // Corte inicial: no se procesan negocios modificados antes de esta fecha ISO.
+    syncStart: process.env.HUBSPOT_SYNC_START ?? '',
+    eventAliases: parseAliases(`${DEFAULT_EVENT_ALIASES};${process.env.HUBSPOT_EVENT_ALIASES ?? ''}`),
   },
   whatsapp: {
     businessGroupUrl: process.env.WHATSAPP_GROUP_BUSINESS_URL ?? '',

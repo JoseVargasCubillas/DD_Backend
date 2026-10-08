@@ -10,7 +10,7 @@ import {
   signFolio,
   verifyFolioSignature,
 } from '../../atoms/helpers/ticket-token.helper.js';
-import { formatEventDateLabel, formatEventFormatLabel } from '../../atoms/helpers/event-ticket.helper.js';
+import { formatEventDateLabel, formatEventFormatLabel, formatTicketOrderRef, isHubspotOrderId } from '../../atoms/helpers/event-ticket.helper.js';
 import * as attendanceSheet from './attendance-sheet.service.js';
 
 export interface PublicTicket {
@@ -28,7 +28,10 @@ export interface PublicTicket {
   checkedInAt: string | null;
   seatIndex: number;
   seatTotal: number;
+  // Id real de la orden (para enlazar el recibo); vacío si no hay recibo web.
   orderReference: string;
+  // Código corto para mostrar: HP-<deal> (HubSpot) o WB-XXXXXXXX (web).
+  orderLabel: string;
   url: string;
   qrUrl: string;
 }
@@ -65,7 +68,8 @@ export const toPublicTicket = (t: IEventTicketDocument): PublicTicket => ({
   checkedInAt: toIso(t.checkedInAt),
   seatIndex: t.seatIndex,
   seatTotal: t.seatTotal,
-  orderReference: t.orderId,
+  orderReference: isHubspotOrderId(t.orderId) ? '' : t.orderId,
+  orderLabel: formatTicketOrderRef(t.orderId),
   url: buildTicketUrl(t.folio, t.signature),
   qrUrl: buildTicketQrUrl(t.folio, t.signature),
 });
@@ -100,12 +104,14 @@ const resolveEventMeta = async (item: IOrderDocument['items'][number]) => {
   let eventSlug = '';
   let eventDate = item.eventDate || '';
   let eventFormat = item.eventFormat || '';
+  let eventModality: string | null = null;
   let title = item.title;
   const ref = String(item.refId || '');
   if (ref) {
     const event = UUID_RE.test(ref) ? await Event.findById(ref) : await Event.findOne({ slug: ref });
     if (event) {
       eventSlug = event.slug;
+      eventModality = event.modality || null;
       title = event.title || title;
       eventDate = eventDate || formatEventDateLabel(event.startDate, event.endDate);
       eventFormat = eventFormat || formatEventFormatLabel(event.modality, event.location);
@@ -113,11 +119,78 @@ const resolveEventMeta = async (item: IOrderDocument['items'][number]) => {
       eventSlug = ref;
     }
   }
-  return { eventSlug, eventDate, eventFormat, title };
+  return { eventSlug, eventDate, eventFormat, title, modality: eventModality };
 };
 
-// Genera un boleto por asiento para cada item de evento de la orden. Es
-// idempotente: si la orden ya tiene boletos, los devuelve sin duplicar.
+// Solo los eventos presenciales (o híbridos) llevan boleto con QR. Con un
+// Event en la DB manda su `modality`; si es de catálogo (sin Event) se infiere
+// del formato/refId/título ("Online · Zoom", "...-online").
+const isOnlineOnly = (
+  meta: { modality: string | null; eventFormat: string; title: string },
+  refId: string,
+): boolean => {
+  if (meta.modality) return meta.modality === 'online';
+  return /online|en l[ií]nea|virtual/i.test(`${meta.eventFormat} ${refId} ${meta.title}`)
+    && !/presencial|h[ií]brido/i.test(meta.eventFormat);
+};
+
+interface TicketBatchInput {
+  orderId: string;
+  orderItemIndex: number;
+  seatTotal: number;
+  eventRefId: string;
+  eventSlug: string;
+  eventTitle: string;
+  eventDate: string;
+  eventFormat: string;
+  attendee: { name: string; email: string; phone: string };
+  amount: number;
+  currency: string;
+  purchasedAt: Date | string;
+  ticketType?: string;
+}
+
+// Crea un boleto por asiento y los agrega al Google Sheet de asistencia.
+const issueTickets = async (input: TicketBatchInput): Promise<IEventTicketDocument[]> => {
+  const sheetTab = attendanceSheet.buildTabTitle(input.eventTitle, input.eventDate);
+  const created: IEventTicketDocument[] = [];
+
+  for (let seat = 1; seat <= input.seatTotal; seat += 1) {
+    let folio = generateFolio(input.eventTitle);
+    // Colisión improbable (32^6) pero barata de evitar.
+    while (await EventTicket.findOne({ folio })) folio = generateFolio(input.eventTitle);
+
+    const ticket = await EventTicket.create({
+      folio,
+      signature: signFolio(folio),
+      orderId: input.orderId,
+      orderItemIndex: input.orderItemIndex,
+      seatIndex: seat,
+      seatTotal: input.seatTotal,
+      eventRefId: input.eventRefId,
+      eventSlug: input.eventSlug,
+      eventTitle: input.eventTitle,
+      eventDate: input.eventDate,
+      eventFormat: input.eventFormat,
+      attendeeName: input.attendee.name,
+      attendeeEmail: input.attendee.email,
+      attendeePhone: input.attendee.phone,
+      amount: input.amount,
+      currency: input.currency,
+      purchasedAt: input.purchasedAt,
+      status: TICKET_STATUS.VALID,
+      sheetTab,
+      ...(input.ticketType && { ticketType: input.ticketType }),
+    });
+    await syncSheetBestEffort(ticket, 'append');
+    created.push(ticket);
+  }
+  return created;
+};
+
+// Genera un boleto por asiento para cada item de evento PRESENCIAL de la
+// orden. Es idempotente: si la orden ya tiene boletos, los devuelve sin
+// duplicar. Los items online no generan boleto.
 export const createTicketsForOrder = async (
   order: IOrderDocument,
   attendee: { name: string; email: string; phone: string },
@@ -136,41 +209,47 @@ export const createTicketsForOrder = async (
 
   for (const { item, index } of eventItems) {
     const meta = await resolveEventMeta(item);
-    const seatTotal = Math.max(1, Number(item.quantity) || 1);
-    const unitAmount = Number(item.price) || 0;
-    const sheetTab = attendanceSheet.buildTabTitle(meta.title, meta.eventDate);
-
-    for (let seat = 1; seat <= seatTotal; seat += 1) {
-      let folio = generateFolio(meta.title);
-      // Colisión improbable (32^6) pero barata de evitar.
-      while (await EventTicket.findOne({ folio })) folio = generateFolio(meta.title);
-
-      const ticket = await EventTicket.create({
-        folio,
-        signature: signFolio(folio),
+    if (isOnlineOnly(meta, String(item.refId || ''))) continue;
+    created.push(
+      ...(await issueTickets({
         orderId,
         orderItemIndex: index,
-        seatIndex: seat,
-        seatTotal,
+        seatTotal: Math.max(1, Number(item.quantity) || 1),
         eventRefId: String(item.refId || ''),
         eventSlug: meta.eventSlug,
         eventTitle: meta.title,
         eventDate: meta.eventDate,
         eventFormat: meta.eventFormat,
-        attendeeName: attendee.name,
-        attendeeEmail: attendee.email,
-        attendeePhone: attendee.phone,
-        amount: unitAmount,
+        attendee,
+        amount: Number(item.price) || 0,
         currency: order.currency || 'MXN',
         purchasedAt,
-        status: TICKET_STATUS.VALID,
-        sheetTab,
-      });
-      await syncSheetBestEffort(ticket, 'append');
-      created.push(ticket);
-    }
+      })),
+    );
   }
   return created;
+};
+
+// Boletos para una venta cerrada fuera de la página (negocio ganado en
+// HubSpot). `externalRef` hace de orderId: "hubspot:<dealId>:<lineItemId>".
+export const createTicketsForExternalSale = (input: Omit<TicketBatchInput, 'orderItemIndex' | 'orderId'> & {
+  externalRef: string;
+}): Promise<IEventTicketDocument[]> =>
+  issueTickets({ ...input, orderId: input.externalRef, orderItemIndex: 0 });
+
+// ¿Esta persona ya tiene boleto vigente para este evento (p. ej. compró en la
+// página y además el asesor cerró el negocio)? Evita mandar dos QR.
+export const findActiveTicketForEvent = async (
+  email: string,
+  eventKeys: string[],
+): Promise<IEventTicketDocument | null> => {
+  const wanted = new Set(eventKeys.filter(Boolean));
+  const target = email.trim().toLowerCase();
+  const all = await EventTicket.find({});
+  return all.find((t) =>
+    t.status !== TICKET_STATUS.VOID
+    && (t.attendeeEmail || '').trim().toLowerCase() === target
+    && (wanted.has(t.eventRefId) || wanted.has(t.eventSlug))) ?? null;
 };
 
 export const getTicketsForOrder = async (orderId: string): Promise<IEventTicketDocument[]> =>

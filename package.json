@@ -15,7 +15,8 @@
         "masterclass:invite": "tsx src/scripts/masterclass-40hrs-blast.ts invite",
         "masterclass:reminder": "tsx src/scripts/masterclass-40hrs-blast.ts reminder",
         "masterclass:live": "tsx src/scripts/masterclass-40hrs-blast.ts live",
-        "report:sheet-sync": "tsx src/scripts/daily-sheet-report.ts"
+        "report:sheet-sync": "tsx src/scripts/daily-sheet-report.ts",
+        "hubspot:sync": "tsx src/scripts/hubspot-sync.ts"
     },
     "dependencies": {
         "bcryptjs": "^2.4.3",

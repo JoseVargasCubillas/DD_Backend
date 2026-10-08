@@ -4,6 +4,20 @@
 
 const MAX_LABEL_LENGTH = 80;
 
+// Código corto de origen que se muestra en boletos, correos y Sheet. El
+// orderId interno no cambia ("hubspot:<deal>:<item>" / id de la orden web).
+//   HP-<dealId>  → venta cerrada por un asesor en HubSpot
+//   WB-<8 chars> → compra en la página web
+export const isHubspotOrderId = (orderId: string): boolean => /^hubspot:/i.test(String(orderId || ''));
+
+export const formatTicketOrderRef = (orderId: string): string => {
+  const id = String(orderId || '');
+  const hubspot = id.match(/^hubspot:(\d+)/i);
+  if (hubspot) return `HP-${hubspot[1]}`;
+  const tail = id.replace(/[^a-z0-9]/gi, '').slice(-8).toUpperCase();
+  return tail ? `WB-${tail}` : '';
+};
+
 // Los valores de catálogo (sin Event en la DB) llegan del cliente: se limpian
 // de saltos de línea / caracteres de control / "<>" y se acotan.
 export const sanitizeTicketLabel = (value: unknown): string =>

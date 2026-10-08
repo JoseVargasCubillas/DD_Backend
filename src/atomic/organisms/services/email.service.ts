@@ -2,6 +2,7 @@ import nodemailer from 'nodemailer';
 import { env } from '../../../config/env.js';
 import { IUserDocument } from '../../molecules/models/user.model.js';
 import { IOrderDocument } from '../../molecules/models/order.model.js';
+import { formatTicketOrderRef } from '../../atoms/helpers/event-ticket.helper.js';
 
 const ADMIN_NOTICE_EMAIL = 'Ti@diegodiaz.mx';
 
@@ -457,7 +458,7 @@ export const sendEventOrderReceipt = (input: {
       ${amountBand('Monto pagado', formatMXN(order.total))}
       ${hasTickets ? `
         <div style="margin:0 0 14px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">&#8212; ${tickets.length === 1 ? 'Tu boleto' : 'Tus boletos'}</div>
-        ${tickets.map((t) => ticketCard(t, orderRef)).join('')}
+        ${tickets.map((t) => ticketCard(t, formatTicketOrderRef(orderId))).join('')}
       ` : ''}
       ${confirmationPanel({
         label: 'Compra confirmada',
@@ -496,6 +497,42 @@ export const sendEventOrderReceipt = (input: {
   return sendWithAttachments(
     email,
     subject,
+    html,
+    tickets.map((t) => ({
+      filename: `boleto-${t.folio}.png`,
+      content: t.qrPng,
+      contentType: 'image/png',
+      cid: t.qrCid,
+    })),
+  );
+};
+
+// Boletos de una venta cerrada por un asesor (negocio ganado en HubSpot): mismo
+// layout de tarjeta con QR que el recibo de la página, pero sin orden de Stripe
+// ni enlace a "Ver recibo".
+export const sendEventTicketsEmail = (input: {
+  name: string;
+  email: string;
+  reference: string;
+  tickets: Array<ReceiptTicketCard & { qrPng: Buffer }>;
+}): Promise<unknown> => {
+  const { name, email, reference, tickets } = input;
+  const html = emailShell({
+    eyebrow: 'Registro confirmado',
+    badge: 'Confirmado',
+    title: `Tu lugar está<br/>${accent('confirmado.')}`,
+    lead: `Hola ${name}, gracias por tu compra. ${tickets.length === 1 ? 'Este es tu boleto' : `Estos son tus ${tickets.length} boletos`} de acceso: presenta el código QR en la entrada del evento.`,
+    content: `
+      <div style="margin:0 0 14px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">&#8212; ${tickets.length === 1 ? 'Tu boleto' : 'Tus boletos'}</div>
+      ${tickets.map((t) => ticketCard(t, reference)).join('')}
+      <p style="margin:18px 0 0;font-size:13px;line-height:1.6;color:#5f574f;">El QR de cada boleto es único e intransferible; también puedes abrirlo desde el enlace "Ver mi boleto".</p>
+    `,
+    footerMeta: { left: `Ref. ${reference}`, right: formatDateTimeEs(new Date()) },
+    preheader: 'Tu boleto con QR de acceso está listo.',
+  });
+  return sendWithAttachments(
+    email,
+    'Tu boleto de acceso - Diego Díaz',
     html,
     tickets.map((t) => ({
       filename: `boleto-${t.folio}.png`,

@@ -11,6 +11,7 @@
 
 import { google, sheets_v4 } from 'googleapis';
 import type { IEventTicketDocument } from '../../molecules/models/event-ticket.model.js';
+import { formatTicketOrderRef } from '../../atoms/helpers/event-ticket.helper.js';
 
 const SHEET_ID = process.env.ATTENDANCE_SHEET_ID || '';
 const SA_KEY_FILE = process.env.GOOGLE_SA_KEY_FILE
@@ -81,10 +82,10 @@ const ticketRow = (t: IEventTicketDocument): string[] => [
   t.attendeePhone,
   t.eventTitle,
   t.eventDate,
-  `${t.seatIndex} de ${t.seatTotal}`,
+  `${t.seatIndex} de ${t.seatTotal}${t.ticketType ? ` · ${t.ticketType}` : ''}`,
   formatDateTimeEs(t.purchasedAt),
   formatAmount(t.amount, t.currency),
-  t.orderId,
+  formatTicketOrderRef(t.orderId),
   t.status === 'used' ? '✅ Asistió' : t.status === 'void' ? 'Anulado' : 'Pendiente',
   formatDateTimeEs(t.checkedInAt),
   t.checkedInBy ?? '',
