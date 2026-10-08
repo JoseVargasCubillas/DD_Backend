@@ -91,19 +91,29 @@ const ticketRow = (t: IEventTicketDocument): string[] => [
   t.checkedInBy ?? '',
 ];
 
+// Google Sheets trata los nombres de pestaña sin distinguir mayúsculas
+// ("Taller de Estrategia" y "Taller de estrategia" son la misma), así que la
+// búsqueda y las cachés usan el nombre en minúsculas como llave.
+const tabKey = (title: string): string => title.trim().toLowerCase();
 const tabCache = new Map<string, number>();
+const tabNames = new Map<string, string>(); // llave -> nombre real de la pestaña en el Sheet
+
+// Nombre real de la pestaña (con las mayúsculas con que existe en el Sheet).
+const actualTabName = (title: string): string => tabNames.get(tabKey(title)) ?? title;
 
 // Devuelve el sheetId (gid) de la pestaña, creándola con encabezados si no existe.
 export const ensureEventTab = async (title: string): Promise<number> => {
-  const cached = tabCache.get(title);
+  const key = tabKey(title);
+  const cached = tabCache.get(key);
   if (cached != null) return cached;
 
   const sheets = getSheets();
   const meta = await sheets.spreadsheets.get({ spreadsheetId: SHEET_ID, fields: 'sheets.properties' });
-  const existing = meta.data.sheets?.find((s) => s.properties?.title === title)?.properties?.sheetId;
-  if (existing != null) {
-    tabCache.set(title, existing);
-    return existing;
+  const found = meta.data.sheets?.find((s) => tabKey(s.properties?.title ?? '') === key)?.properties;
+  if (found?.sheetId != null) {
+    tabCache.set(key, found.sheetId);
+    tabNames.set(key, found.title ?? title);
+    return found.sheetId;
   }
 
   const res = await sheets.spreadsheets.batchUpdate({
@@ -136,15 +146,17 @@ export const ensureEventTab = async (title: string): Promise<number> => {
     },
   });
 
-  tabCache.set(title, sheetId);
+  tabCache.set(key, sheetId);
+  tabNames.set(key, title);
   return sheetId;
 };
 
 // Agrega la fila del boleto y devuelve el número de fila (1-based) donde quedó.
 export const appendTicketRow = async (ticket: IEventTicketDocument): Promise<{ tab: string; row: number } | null> => {
   if (!SHEET_ID) return null;
-  const tab = ticket.sheetTab || buildTabTitle(ticket.eventTitle, ticket.eventDate);
-  await ensureEventTab(tab);
+  const wanted = ticket.sheetTab || buildTabTitle(ticket.eventTitle, ticket.eventDate);
+  await ensureEventTab(wanted);
+  const tab = actualTabName(wanted);
   const res = await getSheets().spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
     range: `'${tab}'!A:M`,
@@ -170,8 +182,9 @@ const findRowByFolio = async (tab: string, folio: string): Promise<number | null
 // verde si asistió / blanca si se deshizo el check-in.
 export const syncTicketRow = async (ticket: IEventTicketDocument): Promise<{ tab: string; row: number } | null> => {
   if (!SHEET_ID) return null;
-  const tab = ticket.sheetTab || buildTabTitle(ticket.eventTitle, ticket.eventDate);
-  const sheetId = await ensureEventTab(tab);
+  const wanted = ticket.sheetTab || buildTabTitle(ticket.eventTitle, ticket.eventDate);
+  const sheetId = await ensureEventTab(wanted);
+  const tab = actualTabName(wanted);
   let row = ticket.sheetRow ?? null;
   if (!row || row < 2) row = await findRowByFolio(tab, ticket.folio);
   if (!row) {
