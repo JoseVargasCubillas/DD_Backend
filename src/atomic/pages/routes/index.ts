@@ -20,6 +20,7 @@ import academiaRoutes from './academia.routes.js';
 import analyticsRoutes from './analytics.routes.js';
 import whatsappRoutes from './whatsapp.routes.js';
 import ticketRoutes from './ticket.routes.js';
+import integrationsRoutes from './integrations.routes.js';
 
 export const apiRoutes = Router();
 
@@ -45,3 +46,4 @@ apiRoutes.use('/academia', academiaRoutes);
 apiRoutes.use('/analytics', analyticsRoutes);
 apiRoutes.use('/whatsapp', whatsappRoutes);
 apiRoutes.use('/tickets', ticketRoutes);
+apiRoutes.use('/integrations', integrationsRoutes);

@@ -11,9 +11,11 @@
  * viejos (nombres con emojis, "SEF Online", etc.) se ignoran. "Online" nunca
  * genera boleto. Si el objeto Producto trae modalidad/descripción "online" tampoco.
  *
- * El evento debe existir en la tabla `events` (mismo día y título/slug que
- * contenga el nombre del producto). Si no existe, el item queda 'pending_event'
- * y se emite solo cuando se dé de alta el evento (máx. 60 días).
+ * El evento debe existir (mismo día y título/slug que contenga el nombre del
+ * producto o un alias): primero en la tabla `events` y, si no, en el calendario
+ * fijo del sitio (event-catalog.constant.ts, generado con `npm run catalog:gen`).
+ * Si no existe en ninguno, el item queda 'pending_event' y se emite solo cuando
+ * aparezca (máx. 60 días).
  *
  * Idempotencia: cada dealId + lineItemId queda en la tabla `hubspot_sync`.
  * Corte: la primera corrida fija el cursor en HUBSPOT_SYNC_START (o "ahora"),
@@ -23,7 +25,8 @@
 import slugify from 'slugify';
 import { env } from '../../../config/env.js';
 import { getPool } from '../../../config/database.js';
-import { Event, IEventDocument } from '../../molecules/models/event.model.js';
+import { Event } from '../../molecules/models/event.model.js';
+import { loadCatalog } from './event-catalog.service.js';
 import { EventTicket, IEventTicketDocument } from '../../molecules/models/event-ticket.model.js';
 import { HubspotSync, IHubspotSyncDocument } from '../../molecules/models/hubspot-sync.model.js';
 import { buildTicketUrl } from '../../atoms/helpers/ticket-token.helper.js';
@@ -174,21 +177,52 @@ const norm = (s: string): string =>
 const mxDay = (value: Date | string): string =>
   new Intl.DateTimeFormat('en-CA', { timeZone: MX_TZ }).format(new Date(value));
 
-// Busca el Event de la DB por nombre + día. Coincide si el título/slug contiene
-// el nombre del producto o un alias configurado (HUBSPOT_EVENT_ALIASES, p. ej.
-// "SEF CDMX" -> "estrategia-fiscal-cdmx"). Sin coincidencia NO se emite el
-// boleto: queda pendiente hasta que el evento exista en la tabla `events`.
-const findEvent = async (name: string, date: string): Promise<IEventDocument | null> => {
+// Evento destino ya resuelto, venga de la tabla `events` o del calendario fijo.
+interface ResolvedEvent {
+  refId: string; // id del Event en la DB, o el slug si solo está en el calendario
+  slug: string;
+  title: string;
+  startDate: Date | string;
+  endDate?: Date | string | null;
+  location: string;
+  modality: string; // 'in-person' | 'online' | 'hybrid' | 'unknown'
+  source: 'db' | 'catalog';
+}
+
+// Coincide si el título/slug contiene el nombre del producto o un alias
+// configurado (HUBSPOT_EVENT_ALIASES, p. ej. "SEF CDMX" -> "estrategia-fiscal-cdmx").
+const nameMatches = (title: string, slug: string, wanted: string, aliases: string[]): boolean => {
+  const t = norm(title);
+  const sl = norm(slug);
+  if (t.includes(wanted) || wanted.includes(t) || sl.includes(wanted) || wanted.includes(sl)) return true;
+  return aliases.some((a) => t.includes(a) || sl.includes(a));
+};
+
+// Busca el evento por nombre + día: primero en la tabla `events` y, si no está,
+// en el calendario fijo del sitio (event-catalog.constant.ts, copia del frontend).
+// Sin coincidencia en ninguno NO se emite el boleto: queda pendiente.
+export const findEvent = async (name: string, date: string): Promise<ResolvedEvent | null> => {
   const wanted = norm(name);
   const aliases = env.hubspot.eventAliases[wanted] ?? [];
-  const events = await Event.find({});
-  return events.find((e) => {
-    if (mxDay(e.startDate) !== date) return false;
-    const title = norm(e.title);
-    const slug = norm(e.slug);
-    if (title.includes(wanted) || wanted.includes(title) || slug.includes(wanted) || wanted.includes(slug)) return true;
-    return aliases.some((a) => title.includes(a) || slug.includes(a));
-  }) ?? null;
+
+  const db = (await Event.find({})).find((e) => mxDay(e.startDate) === date && nameMatches(e.title, e.slug, wanted, aliases));
+  if (db) {
+    return {
+      refId: String(db._id), slug: db.slug, title: db.title, startDate: db.startDate, endDate: db.endDate,
+      location: db.location, modality: db.modality, source: 'db',
+    };
+  }
+
+  const cat = (await loadCatalog()).find((e) => mxDay(e.startDate) === date && nameMatches(e.title, e.slug, wanted, aliases));
+  if (cat) {
+    // Sin modalidad en el calendario: se infiere del slug/título ("...-online-...").
+    const modality = cat.modality !== 'unknown' ? cat.modality : /online|virtual|zoom/i.test(`${cat.slug} ${cat.title}`) ? 'online' : 'in-person';
+    return {
+      refId: cat.slug, slug: cat.slug, title: cat.title, startDate: cat.startDate, endDate: cat.endDate ?? null,
+      location: cat.location, modality, source: 'catalog',
+    };
+  }
+  return null;
 };
 
 // ---------------------------------------------------------------------------
@@ -336,13 +370,13 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     if (looksOnline(modalityText)) { await markSkipped(c, 'producto marcado como online'); continue; }
 
     const event = await findEvent(parsed.name, parsed.date);
-    if (event?.modality === 'online') { await markSkipped(c, 'evento online en la DB'); continue; }
+    if (event?.modality === 'online') { await markSkipped(c, 'el evento es online'); continue; }
 
     if (!event) {
       // Sin Event en la DB no se emite boleto (evita QR para eventos mal escritos).
       summary.pendingEvent += 1;
       if (!c.pending) {
-        log(`negocio ${deal.id} · "${c.props.name}" → PENDIENTE: no hay un evento "${parsed.name}" el ${parsed.date} en la DB; se emite cuando exista`);
+        log(`negocio ${deal.id} · "${c.props.name}" → PENDIENTE: no hay un evento "${parsed.name}" el ${parsed.date} (ni en la DB ni en el calendario); se emite cuando exista`);
         if (!dryRun) {
           await HubspotSync.create({
             kind: 'item', dealId: deal.id, lineItemId: c.id, status: 'pending_event',
@@ -355,7 +389,7 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     }
 
     const eventSlug = event.slug;
-    const eventRefId = String(event._id);
+    const eventRefId = event.refId;
 
     const dup = await findActiveTicketForEvent(email, [eventRefId, eventSlug]);
     if (dup) { await markSkipped(c, `ya tiene boleto ${dup.folio}`); continue; }
@@ -553,4 +587,37 @@ export const startHubspotSyncWorker = (): void => {
   setTimeout(() => void tick(), 30_000);
   setInterval(() => void tick(), env.hubspot.pollIntervalMs);
   console.log(`[hubspot-sync] worker iniciado (cada ${Math.round(env.hubspot.pollIntervalMs / 1000)} s)`);
+};
+
+// Estado para el panel de admin.
+export const getHubspotStatus = async (): Promise<{
+  enabled: boolean;
+  intervalSec: number;
+  lastRunAt: string | null;
+  cursor: string | null;
+  pendingEvent: number;
+  issued: number;
+}> => {
+  const state = await loadState();
+  const items = await HubspotSync.find({ kind: 'item' });
+  return {
+    enabled: Boolean(env.hubspot.token) && env.hubspot.syncEnabled,
+    intervalSec: Math.round(env.hubspot.pollIntervalMs / 1000),
+    lastRunAt: state?.lastRunAt ?? null,
+    cursor: state?.cursor ?? null,
+    pendingEvent: items.filter((i) => i.status === 'pending_event').length,
+    issued: items.filter((i) => i.status === 'issued').length,
+  };
+};
+
+// "Sincronizar ahora" del admin: respeta la pausa (HUBSPOT_SYNC_ENABLED=false) y
+// usa el mismo candado que el ciclo automático, así que nunca se pisan.
+export const runHubspotSyncNow = async (): Promise<SyncSummary> => {
+  if (!env.hubspot.token) {
+    throw Object.assign(new Error('HubSpot no está configurado en este servidor (falta HUBSPOT_TOKEN).'), { statusCode: 409 });
+  }
+  if (!env.hubspot.syncEnabled) {
+    throw Object.assign(new Error('La sincronización con HubSpot está en pausa (HUBSPOT_SYNC_ENABLED=false).'), { statusCode: 409 });
+  }
+  return runHubspotSyncOnce();
 };
