@@ -32,7 +32,7 @@
         "morgan": "^1.10.0",
         "multer": "^2.2.0",
         "mysql2": "^3.22.5",
-        "nodemailer": "^9.0.1",
+        "nodemailer": "^10.0.9",
         "qrcode": "^1.5.4",
         "read-excel-file": "^9.3.10",
         "slugify": "^1.6.6",
