@@ -137,6 +137,8 @@ interface WonDeal {
   id: string;
   modifiedMs: number;
   closedAt: string | null;
+  // Propietario (asesor asignado) del negocio en HubSpot.
+  ownerId?: string | null;
 }
 
 const fetchWonDeals = async (sinceMs: number): Promise<WonDeal[]> => {
@@ -152,7 +154,7 @@ const fetchWonDeals = async (sinceMs: number): Promise<WonDeal[]> => {
         ],
       }],
       sorts: [{ propertyName: 'hs_lastmodifieddate', direction: 'ASCENDING' }],
-      properties: ['dealname', 'hs_lastmodifieddate', 'closedate'],
+      properties: ['dealname', 'hs_lastmodifieddate', 'closedate', 'hubspot_owner_id'],
       limit: 100,
       ...(after && { after }),
     });
@@ -161,6 +163,7 @@ const fetchWonDeals = async (sinceMs: number): Promise<WonDeal[]> => {
         id: String(row.id),
         modifiedMs: new Date(row.properties?.hs_lastmodifieddate ?? Date.now()).getTime(),
         closedAt: row.properties?.closedate ?? null,
+        ownerId: row.properties?.hubspot_owner_id ?? null,
       });
     }
     after = data.paging?.next?.after;
@@ -244,6 +247,40 @@ export interface SyncSummary {
 
 const log = (msg: string): void => console.log(`[hubspot-sync] ${msg}`);
 
+// Asesor asignado en HubSpot = propietario del negocio. Su correo sale de la API de
+// propietarios (necesita el permiso crm.objects.owners.read); sin él no se manda copia.
+const OWNER_TTL_MS = 60 * 60 * 1000;
+const ownerCache = new Map<string, { at: number; advisor: { email: string; name: string } | null }>();
+let ownersScopeWarned = false;
+
+const getAdvisor = async (ownerId?: string | null): Promise<{ email: string; name: string } | null> => {
+  if (!ownerId || !env.hubspot.advisorCopy) return null;
+  const cached = ownerCache.get(ownerId);
+  if (cached && Date.now() - cached.at < OWNER_TTL_MS) return cached.advisor;
+  try {
+    const o = await hs(`/crm/v3/owners/${ownerId}`);
+    const email = String(o.email ?? '').trim().toLowerCase();
+    const advisor = email.includes('@')
+      ? { email, name: `${o.firstName ?? ''} ${o.lastName ?? ''}`.trim() || email }
+      : null;
+    ownerCache.set(ownerId, { at: Date.now(), advisor });
+    return advisor;
+  } catch (err) {
+    const msg = (err as Error).message;
+    if (msg.includes('HubSpot 403')) {
+      if (!ownersScopeWarned) {
+        ownersScopeWarned = true;
+        log('no se puede leer el asesor del negocio: falta el permiso crm.objects.owners.read en la clave de HubSpot — no se mandan copias a asesores');
+      }
+    } else if (msg.includes('HubSpot 404')) {
+      ownerCache.set(ownerId, { at: Date.now(), advisor: null });
+    } else {
+      log(`no se pudo leer el asesor ${ownerId}: ${msg}`);
+    }
+    return null;
+  }
+};
+
 const findItemRecord = async (dealId: string, lineItemId: string): Promise<IHubspotSyncDocument | null> =>
   HubspotSync.findOne({ kind: 'item', dealId, lineItemId });
 
@@ -282,12 +319,62 @@ const deliverGroupEmail = async (record: IHubspotSyncDocument): Promise<boolean>
     record.emailSentAt = new Date().toISOString();
     record.emailLastError = '';
     await record.save();
+    await deliverAdvisorCopy(record);
     return true;
   } catch (err) {
     record.emailAttempts = (record.emailAttempts ?? 0) + 1;
     record.emailLastError = String((err as Error).message ?? err).slice(0, 300);
     await record.save();
     log(`correo de grupo falló (${record.attendeeEmail}, intento ${record.emailAttempts}): ${record.emailLastError}`);
+    return false;
+  }
+};
+
+// Copia del mismo correo al asesor asignado (solo ventas de HubSpot; las compras
+// web ya avisan a TI). Se manda después de que salió el correo del cliente y se
+// reintenta sola si falla.
+const deliverAdvisorCopy = async (record: IHubspotSyncDocument): Promise<boolean> => {
+  if (!record.advisorEmail || record.advisorCopySentAt || !record.emailSentAt || !record.attendeeEmail) return false;
+  try {
+    const reference = formatTicketOrderRef(`hubspot:${record.dealId}`);
+    if (record.groupKey && record.inviteToken) {
+      const card = await cardFromToken(record.inviteToken, record.groupKey as GroupKey);
+      const clientName = record.attendeeName || record.attendeeEmail;
+      await sendEventGroupEmail({
+        name: clientName,
+        email: record.attendeeEmail,
+        reference,
+        groups: [card],
+        title: record.eventTitle || groupLabel(record.groupKey as GroupKey),
+        eventDate: record.eventDateLabel || '',
+        eventFormat: record.eventFormat || 'Online',
+        amount: record.amount ?? 0,
+        copy: { to: record.advisorEmail, clientName, clientEmail: record.attendeeEmail },
+      });
+    } else {
+      const tickets: IEventTicketDocument[] = [];
+      for (const folio of record.folios ?? []) {
+        const t = await EventTicket.findOne({ folio });
+        if (t) tickets.push(t);
+      }
+      if (tickets.length === 0) return false;
+      const clientName = record.attendeeName || tickets[0].attendeeName;
+      await sendEventTicketsEmail({
+        name: clientName,
+        email: record.attendeeEmail,
+        reference,
+        tickets: await buildCards(tickets),
+        copy: { to: record.advisorEmail, clientName, clientEmail: record.attendeeEmail },
+      });
+    }
+    record.advisorCopySentAt = new Date().toISOString();
+    await record.save();
+    log(`copia enviada al asesor ${record.advisorEmail} (negocio ${record.dealId})`);
+    return true;
+  } catch (err) {
+    record.advisorCopyAttempts = (record.advisorCopyAttempts ?? 0) + 1;
+    await record.save();
+    log(`copia al asesor falló (${record.advisorEmail}, intento ${record.advisorCopyAttempts}): ${String((err as Error).message ?? err).slice(0, 200)}`);
     return false;
   }
 };
@@ -312,6 +399,7 @@ const deliverEmail = async (record: IHubspotSyncDocument): Promise<boolean> => {
     record.emailSentAt = new Date().toISOString();
     record.emailLastError = '';
     await record.save();
+    await deliverAdvisorCopy(record);
     return true;
   } catch (err) {
     record.emailAttempts = (record.emailAttempts ?? 0) + 1;
@@ -323,10 +411,15 @@ const deliverEmail = async (record: IHubspotSyncDocument): Promise<boolean> => {
 };
 
 const retryPendingEmails = async (): Promise<number> => {
-  const pending = (await HubspotSync.find({ kind: 'item', status: 'issued' }))
-    .filter((r) => !r.emailSentAt && (r.emailAttempts ?? 0) < MAX_EMAIL_ATTEMPTS);
+  const issued = await HubspotSync.find({ kind: 'item', status: 'issued' });
   let sent = 0;
-  for (const record of pending) if (await deliverEmail(record)) sent += 1;
+  for (const record of issued) {
+    if (!record.emailSentAt) {
+      if ((record.emailAttempts ?? 0) < MAX_EMAIL_ATTEMPTS && (await deliverEmail(record))) sent += 1;
+    } else if (record.advisorEmail && !record.advisorCopySentAt && (record.advisorCopyAttempts ?? 0) < MAX_EMAIL_ATTEMPTS) {
+      await deliverAdvisorCopy(record);
+    }
+  }
   return sent;
 };
 
@@ -372,6 +465,13 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     phone: String(contact.phone || contact.mobilephone || ''),
   };
 
+  // Asesor asignado (propietario del negocio): recibirá copia del correo del cliente.
+  const advisor = await getAdvisor(deal.ownerId);
+  const advisorFields =
+    advisor && advisor.email !== email
+      ? { advisorEmail: advisor.email, advisorName: advisor.name, advisorCopySentAt: null, advisorCopyAttempts: 0 }
+      : {};
+
   const markSkipped = async (c: (typeof candidates)[number], reason: string): Promise<void> => {
     summary.skipped += 1;
     log(`negocio ${deal.id} · "${c.props.name}" → omitido (${reason})`);
@@ -411,7 +511,7 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
       }
       summary.issued += 1;
       if (dryRun) {
-        log(`[dry] negocio ${deal.id} · ${email} · ${groupLabel(groupKey)} → invitación al grupo de WhatsApp`);
+        log(`[dry] negocio ${deal.id} · ${email} · ${groupLabel(groupKey)} → invitación al grupo de WhatsApp${advisor ? ` · copia → ${advisor.email}` : ''}`);
         continue;
       }
       const card = await issueGroupInvite({ ref: `hubspot:${deal.id}:${c.id}`, key: groupKey, email, name: attendee.name });
@@ -433,6 +533,7 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
         eventDateLabel,
         eventFormat: groupEvent?.location ? `Online · ${groupEvent.location}` : 'Online',
         amount: Number(c.props.price) || 0,
+        ...advisorFields,
         emailSentAt: null,
         emailAttempts: 0,
       };
@@ -486,7 +587,7 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     const seatTotal = Math.max(1, Math.min(20, Number(c.props.quantity) || 1));
     summary.issued += 1;
     if (dryRun) {
-      log(`[dry] negocio ${deal.id} · ${email} · ${parsed.name} ${parsed.date} · ${parsed.tier} × ${seatTotal}`);
+      log(`[dry] negocio ${deal.id} · ${email} · ${parsed.name} ${parsed.date} · ${parsed.tier} × ${seatTotal}${advisor ? ` · copia → ${advisor.email}` : ''}`);
       continue;
     }
 
@@ -509,9 +610,11 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
       reason: '',
       productName: String(c.props.name ?? ''),
       attendeeEmail: email,
+      attendeeName: attendee.name,
       folios: tickets.map((t) => t.folio),
       emailSentAt: null,
       emailAttempts: 0,
+      ...advisorFields,
     };
     let record: IHubspotSyncDocument;
     if (c.pending) {
@@ -545,14 +648,14 @@ const reprocessPendingEvents = async (summary: SyncSummary): Promise<void> => {
   };
   for (const [dealId, records] of byDeal) {
     try {
-      const data = await hs(`/crm/v3/objects/deals/${dealId}?properties=dealstage,pipeline,hs_lastmodifieddate,closedate`);
+      const data = await hs(`/crm/v3/objects/deals/${dealId}?properties=dealstage,pipeline,hs_lastmodifieddate,closedate,hubspot_owner_id`);
       const p = data.properties ?? {};
       const stillWon = p.pipeline === env.hubspot.pipelineId && p.dealstage === env.hubspot.wonStageId;
       if (!stillWon) { await close(records, 'el negocio ya no está en Exitoso'); continue; }
       const oldest = Math.min(...records.map((r) => new Date(String(r.createdAt)).getTime()));
       if (Date.now() - oldest > PENDING_EVENT_MAX_AGE_MS) { await close(records, 'sin evento en la DB tras 60 días'); continue; }
       await processDeal(
-        { id: dealId, modifiedMs: new Date(p.hs_lastmodifieddate ?? Date.now()).getTime(), closedAt: p.closedate ?? null },
+        { id: dealId, modifiedMs: new Date(p.hs_lastmodifieddate ?? Date.now()).getTime(), closedAt: p.closedate ?? null, ownerId: p.hubspot_owner_id ?? null },
         false,
         summary,
       );

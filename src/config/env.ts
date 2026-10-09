@@ -100,6 +100,9 @@ export const env = {
     modalityProperty: process.env.HUBSPOT_PRODUCT_MODALITY_PROPERTY ?? 'modalidad',
     // Corte inicial: no se procesan negocios modificados antes de esta fecha ISO.
     syncStart: process.env.HUBSPOT_SYNC_START ?? '',
+    // Copia del boleto/recibo al asesor (propietario del negocio en HubSpot). Requiere el
+    // permiso crm.objects.owners.read en la clave de servicio.
+    advisorCopy: process.env.HUBSPOT_ADVISOR_COPY !== 'false',
     eventAliases: parseAliases(`${DEFAULT_EVENT_ALIASES};${process.env.HUBSPOT_EVENT_ALIASES ?? ''}`),
   },
   whatsapp: {

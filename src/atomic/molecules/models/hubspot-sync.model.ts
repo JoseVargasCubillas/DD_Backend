@@ -34,6 +34,11 @@ export interface IHubspotSyncDocument extends SqlDocumentMethods<IHubspotSyncDoc
   emailSentAt?: string | null;
   emailAttempts?: number;
   emailLastError?: string;
+  // Copia al asesor propietario del negocio en HubSpot.
+  advisorEmail?: string;
+  advisorName?: string;
+  advisorCopySentAt?: string | null;
+  advisorCopyAttempts?: number;
   createdAt: Date | string;
   updatedAt: Date | string;
 }

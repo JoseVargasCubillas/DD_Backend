@@ -456,6 +456,26 @@ export const groupInviteBlock = (g: GroupInviteEmailCard): string => `
   </div>
 `;
 
+// Versión para la copia del asesor: igual de verde pero SIN enlace ni QR, porque el
+// enlace es de un solo uso y es del cliente (si el asesor lo abriera, lo gastaría).
+const groupInvitePreviewBlock = (g: GroupInviteEmailCard): string => `
+  <div style="margin:0 0 18px;padding:20px 22px;border:1px solid #25D366;background:#f0fbf4;">
+    <p style="margin:0 0 6px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#1e8e4e;">&#8212; ${escapeHtml(g.label)}</p>
+    <p style="margin:0 0 10px;font-family:Georgia,'Times New Roman',serif;font-size:22px;line-height:1.2;color:#17130f;">Invitación al grupo de WhatsApp enviada</p>
+    <p style="margin:0;font-size:13px;line-height:1.6;color:#5f574f;">El cliente recibió su enlace personal de un solo uso para unirse al grupo. Por seguridad, la copia no incluye el enlace ni el QR.</p>
+  </div>
+`;
+
+// Copia para el asesor asignado en HubSpot (mismo correo que recibe el cliente).
+export interface AdvisorCopy {
+  to: string;
+  clientName: string;
+  clientEmail: string;
+}
+
+const advisorLead = (c: AdvisorCopy): string =>
+  `Copia para ti como asesor asignado. Esto se envió a ${c.clientName} (${c.clientEmail}) al cerrar su compra.`;
+
 const groupAttachments = (groups: GroupInviteEmailCard[]): MailAttachment[] =>
   groups.map((g) => ({ filename: 'qr-grupo-whatsapp.png', content: g.qrPng, contentType: 'image/png', cid: g.qrCid }));
 
@@ -494,7 +514,7 @@ export const sendEventOrderReceipt = (input: {
         <div style="margin:0 0 14px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">&#8212; ${tickets.length === 1 ? 'Tu boleto' : 'Tus boletos'}</div>
         ${tickets.map((t) => ticketCard(t, formatTicketOrderRef(orderId))).join('')}
       ` : ''}
-      ${groups.map(groupInviteBlock).join('')}
+      ${groups.map((g) => groupInviteBlock(g)).join('')}
       ${confirmationPanel({
         label: 'Compra confirmada',
         tag: 'Ticket · pago único',
@@ -588,8 +608,9 @@ export const sendEventGroupEmail = (input: {
   eventDate: string;
   eventFormat: string;
   amount: number;
+  copy?: AdvisorCopy;
 }): Promise<unknown> => {
-  const { name, email, reference, groups } = input;
+  const { name, email, reference, groups, copy } = input;
   const summary = hubspotSummary({
     title: input.title,
     format: input.eventFormat,
@@ -604,15 +625,18 @@ export const sendEventGroupEmail = (input: {
     eyebrow: 'Compra confirmada',
     badge: 'Pagado',
     title: `Tu lugar está<br/>${accent('confirmado.')}`,
-    lead: `Hola ${name}, gracias por tu compra. Únete al grupo de WhatsApp para recibir el enlace de acceso al evento y todos los detalles.`,
+    lead: copy
+      ? advisorLead(copy)
+      : `Hola ${name}, gracias por tu compra. Únete al grupo de WhatsApp para recibir el enlace de acceso al evento y todos los detalles.`,
     content: `
       ${summary.band}
-      ${groups.map(groupInviteBlock).join('')}
+      ${copy ? groups.map((g) => groupInvitePreviewBlock(g)).join('') : groups.map((g) => groupInviteBlock(g)).join('')}
       ${summary.panel}
     `,
     footerMeta: { left: `Ref. ${reference}`, right: formatDateTimeEs(new Date()) },
-    preheader: 'Únete al grupo de WhatsApp de tu evento.',
+    preheader: copy ? `Copia para asesor · ${copy.clientName}` : 'Únete al grupo de WhatsApp de tu evento.',
   });
+  if (copy) return send(copy.to, `Copia para asesor · ${copy.clientName} - Diego Díaz`, html);
   return sendWithAttachments(email, 'Tu lugar está confirmado - Diego Díaz', html, groupAttachments(groups));
 };
 
@@ -622,8 +646,9 @@ export const sendEventTicketsEmail = (input: {
   email: string;
   reference: string;
   tickets: Array<ReceiptTicketCard & { qrPng: Buffer }>;
+  copy?: AdvisorCopy;
 }): Promise<unknown> => {
-  const { name, email, reference, tickets } = input;
+  const { name, email, reference, tickets, copy } = input;
   const first = tickets[0];
   const total = tickets.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
   const summary = hubspotSummary({
@@ -640,7 +665,9 @@ export const sendEventTicketsEmail = (input: {
     eyebrow: 'Compra confirmada',
     badge: 'Pagado',
     title: `Tu lugar está<br/>${accent('confirmado.')}`,
-    lead: `Hola ${name}, gracias por tu compra. ${tickets.length === 1 ? 'Este es tu boleto' : `Estos son tus ${tickets.length} boletos`} de acceso: presenta el código QR en la entrada del evento.`,
+    lead: copy
+      ? advisorLead(copy)
+      : `Hola ${name}, gracias por tu compra. ${tickets.length === 1 ? 'Este es tu boleto' : `Estos son tus ${tickets.length} boletos`} de acceso: presenta el código QR en la entrada del evento.`,
     content: `
       ${summary.band}
       <div style="margin:0 0 14px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">&#8212; ${tickets.length === 1 ? 'Tu boleto' : 'Tus boletos'}</div>
@@ -648,11 +675,11 @@ export const sendEventTicketsEmail = (input: {
       ${summary.panel}
     `,
     footerMeta: { left: `Ref. ${reference}`, right: formatDateTimeEs(new Date()) },
-    preheader: 'Tu boleto con QR de acceso está listo.',
+    preheader: copy ? `Copia para asesor · ${copy.clientName}` : 'Tu boleto con QR de acceso está listo.',
   });
   return sendWithAttachments(
-    email,
-    'Tu boleto de acceso - Diego Díaz',
+    copy ? copy.to : email,
+    copy ? `Copia para asesor · ${copy.clientName} - Diego Díaz` : 'Tu boleto de acceso - Diego Díaz',
     html,
     tickets.map((t) => ({
       filename: `boleto-${t.folio}.png`,
