@@ -21,7 +21,16 @@ export interface IHubspotSyncDocument extends SqlDocumentMethods<IHubspotSyncDoc
   reason?: string;
   productName?: string;
   attendeeEmail?: string;
+  attendeeName?: string;
   folios?: string[];
+  // Eventos online con grupo de WhatsApp: producto y token de la invitación enviada.
+  groupKey?: string;
+  inviteToken?: string;
+  // Datos del resumen de compra del correo de grupo (para reintentarlo igual).
+  eventTitle?: string;
+  eventDateLabel?: string;
+  eventFormat?: string;
+  amount?: number;
   emailSentAt?: string | null;
   emailAttempts?: number;
   emailLastError?: string;

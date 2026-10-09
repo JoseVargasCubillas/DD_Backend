@@ -20,6 +20,7 @@ import { getCheckoutUser, CheckoutCustomer, markIncompletePayment, clearIncomple
 import { issueWhatsappInviteToken, buildWhatsappInviteUrl } from './whatsapp-invite.service.js';
 import { buildEventTicketTitle, formatEventDateLabel, formatEventFormatLabel, sanitizeTicketLabel } from '../../atoms/helpers/event-ticket.helper.js';
 import { createTicketsForOrder, renderTicketQrBuffer } from './ticket.service.js';
+import { detectGroupProduct, issueGroupInvite, GroupInviteCard } from './event-group.service.js';
 import { EventTicket } from '../../molecules/models/event-ticket.model.js';
 import { buildTicketUrl } from '../../atoms/helpers/ticket-token.helper.js';
 import Stripe from 'stripe';
@@ -269,8 +270,28 @@ const sendReceiptIfEventOrder = async (order: IOrderDocument): Promise<void> => 
       console.warn('[createTicketsForOrder] failed:', (err as Error).message);
     }
 
+    // Eventos online con grupo de WhatsApp (Holding / SEF Online): enlace de un
+    // solo uso, idempotente por orden + item. Sin enlace configurado no se manda.
+    const groups: GroupInviteCard[] = [];
     try {
-      await sendEventOrderReceipt({ name: recipient.name, email: recipient.email, order, tickets: ticketCards });
+      for (const [index, item] of order.items.entries()) {
+        if (item.type !== 'event') continue;
+        const key = detectGroupProduct(item.refId, item.title, item.eventFormat);
+        if (!key) continue;
+        const card = await issueGroupInvite({
+          ref: `web:${String(order._id)}:${index}`,
+          key,
+          email: recipient.email,
+          name: recipient.name,
+        });
+        if (card) groups.push(card);
+      }
+    } catch (err) {
+      console.warn('[issueGroupInvite] failed:', (err as Error).message);
+    }
+
+    try {
+      await sendEventOrderReceipt({ name: recipient.name, email: recipient.email, order, tickets: ticketCards, groups });
     } catch (err) {
       console.warn('[sendReceiptIfEventOrder] failed:', (err as Error).message);
     }

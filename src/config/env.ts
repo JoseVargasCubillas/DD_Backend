@@ -105,6 +105,9 @@ export const env = {
   whatsapp: {
     businessGroupUrl: process.env.WHATSAPP_GROUP_BUSINESS_URL ?? '',
     masterGroupUrl: process.env.WHATSAPP_GROUP_MASTER_URL ?? '',
+    // Grupos de los eventos online con acceso por WhatsApp (uno por producto).
+    holdingGroupUrl: process.env.WHATSAPP_GROUP_HOLDING_URL ?? '',
+    sefOnlineGroupUrl: process.env.WHATSAPP_GROUP_SEF_ONLINE_URL ?? '',
     whapiToken: process.env.WHAPI_TOKEN ?? '',
     whapiUrl: process.env.WHAPI_URL ?? 'https://gate.whapi.cloud',
   },

@@ -429,6 +429,36 @@ const ticketCard = (t: ReceiptTicketCard, orderRef: string): string => `
   </table>
 `;
 
+// Invitación de un solo uso al grupo de WhatsApp de un evento online (Holding /
+// SEF Online). Mismo bloque verde que Academia, con QR y botón.
+export interface GroupInviteEmailCard {
+  label: string;
+  joinUrl: string;
+  qrCid: string;
+  qrPng: Buffer;
+}
+
+export const groupInviteBlock = (g: GroupInviteEmailCard): string => `
+  <div style="margin:0 0 18px;padding:20px 22px;border:1px solid #25D366;background:#f0fbf4;">
+    <p style="margin:0 0 6px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#1e8e4e;">&#8212; ${escapeHtml(g.label)}</p>
+    <p style="margin:0 0 10px;font-family:Georgia,'Times New Roman',serif;font-size:22px;line-height:1.2;color:#17130f;">Únete al grupo de WhatsApp</p>
+    <p style="margin:0 0 16px;font-size:13px;line-height:1.6;color:#5f574f;">En el grupo daremos acceso al enlace del evento y todos los detalles. Escanea este QR con tu celular o usa el botón.</p>
+    <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 16px;">
+      <tr>
+        <td style="padding:0;">
+          <img src="cid:${escapeHtml(g.qrCid)}" width="150" height="150" alt="QR para unirte al grupo de WhatsApp" style="display:block;width:150px;height:150px;background:#ffffff;padding:6px;border:1px solid #bfe8cd;" />
+        </td>
+        <td valign="middle" style="padding:0 0 0 16px;font-size:10px;letter-spacing:2px;text-transform:uppercase;color:#1e8e4e;line-height:1.6;">Escanea para<br/>unirte al grupo</td>
+      </tr>
+    </table>
+    ${linkButton({ label: 'Unirme al grupo de WhatsApp', url: g.joinUrl, dark: false })}
+    <p style="margin:6px 0 0;font-size:12px;line-height:1.6;color:#8b8175;">Este enlace es de un solo uso y personal — no lo compartas, deja de funcionar en cuanto entras al grupo.</p>
+  </div>
+`;
+
+const groupAttachments = (groups: GroupInviteEmailCard[]): MailAttachment[] =>
+  groups.map((g) => ({ filename: 'qr-grupo-whatsapp.png', content: g.qrPng, contentType: 'image/png', cid: g.qrCid }));
+
 // Recibo de compra de un ticket de evento — mismo layout que
 // sendAcademiaOrderReceipt, pero sin cuenta de por medio:
 // no hay CTA de "ir a mi cuenta" ni credenciales, solo el comprobante.
@@ -438,28 +468,33 @@ export const sendEventOrderReceipt = (input: {
   email: string;
   order: IOrderDocument;
   tickets?: Array<ReceiptTicketCard & { qrPng: Buffer }>;
+  groups?: GroupInviteEmailCard[];
 }): Promise<unknown> => {
-  const { name, email, order, tickets = [] } = input;
+  const { name, email, order, tickets = [], groups = [] } = input;
   const orderId = String(order._id || order.id || '');
   const ticketTitle = order.items.map((i) => i.title).join(', ');
   const eventFormat = order.items.map((i) => i.eventFormat).filter(Boolean).join(', ');
   const eventDate = order.items.map((i) => i.eventDate).filter(Boolean).join(', ');
   const orderRef = order.stripePaymentIntentId || orderId;
   const hasTickets = tickets.length > 0;
+  const hasGroups = groups.length > 0;
 
   const html = emailShell({
     eyebrow: 'Compra confirmada',
     badge: 'Pagado',
-    title: hasTickets ? `Tu lugar está<br/>${accent('confirmado.')}` : `Tu pago<br/>fue ${accent('confirmado.')}`,
+    title: hasTickets || hasGroups ? `Tu lugar está<br/>${accent('confirmado.')}` : `Tu pago<br/>fue ${accent('confirmado.')}`,
     lead: hasTickets
       ? `Hola ${name}, gracias por tu compra. ${tickets.length === 1 ? 'Este es tu boleto' : `Estos son tus ${tickets.length} boletos`} de acceso: presenta el código QR en la entrada del evento.`
-      : `Hola ${name}, gracias por tu compra.`,
+      : hasGroups
+        ? `Hola ${name}, gracias por tu compra. Únete al grupo de WhatsApp para recibir el enlace de acceso al evento y todos los detalles.`
+        : `Hola ${name}, gracias por tu compra.`,
     content: `
       ${amountBand('Monto pagado', formatMXN(order.total))}
       ${hasTickets ? `
         <div style="margin:0 0 14px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">&#8212; ${tickets.length === 1 ? 'Tu boleto' : 'Tus boletos'}</div>
         ${tickets.map((t) => ticketCard(t, formatTicketOrderRef(orderId))).join('')}
       ` : ''}
+      ${groups.map(groupInviteBlock).join('')}
       ${confirmationPanel({
         label: 'Compra confirmada',
         tag: 'Ticket · pago único',
@@ -489,27 +524,99 @@ export const sendEventOrderReceipt = (input: {
       left: `Orden #${orderId.slice(-8).toUpperCase()}`,
       right: formatDateTimeEs(new Date()),
     },
-    preheader: hasTickets ? 'Tu boleto con QR de acceso está listo.' : 'Tu pago fue confirmado correctamente.',
+    preheader: hasTickets
+      ? 'Tu boleto con QR de acceso está listo.'
+      : hasGroups
+        ? 'Únete al grupo de WhatsApp de tu evento.'
+        : 'Tu pago fue confirmado correctamente.',
   });
 
-  const subject = hasTickets ? 'Tu boleto de acceso - Diego Díaz' : 'Tu pago fue confirmado - Diego Díaz';
-  if (!hasTickets) return send(email, subject, html);
-  return sendWithAttachments(
-    email,
-    subject,
-    html,
-    tickets.map((t) => ({
+  const subject = hasTickets
+    ? 'Tu boleto de acceso - Diego Díaz'
+    : hasGroups
+      ? 'Tu lugar está confirmado - Diego Díaz'
+      : 'Tu pago fue confirmado - Diego Díaz';
+  if (!hasTickets && !hasGroups) return send(email, subject, html);
+  return sendWithAttachments(email, subject, html, [
+    ...tickets.map((t) => ({
       filename: `boleto-${t.folio}.png`,
       content: t.qrPng,
       contentType: 'image/png',
       cid: t.qrCid,
     })),
-  );
+    ...groupAttachments(groups),
+  ]);
 };
 
-// Boletos de una venta cerrada por un asesor (negocio ganado en HubSpot): mismo
-// layout de tarjeta con QR que el recibo de la página, pero sin orden de Stripe
-// ni enlace a "Ver recibo".
+// Correos de ventas cerradas por un asesor en HubSpot (sin orden de Stripe): mismo
+// resumen de compra que el recibo de la página (monto + panel con evento, formato,
+// fecha, correo, monto y referencia), siempre incluido. No lleva "Ver recibo"
+// porque no hay recibo web.
+const hubspotSummary = (i: {
+  title: string;
+  format: string;
+  date: string;
+  email: string;
+  amount: number;
+  reference: string;
+  description: string;
+}): { band: string; panel: string } => ({
+  band: amountBand('Monto pagado', formatMXN(i.amount)),
+  panel: confirmationPanel({
+    label: 'Compra confirmada',
+    tag: 'Ticket · pago único',
+    value: accent(i.title),
+    description: i.description,
+    rows: [
+      ['Evento', i.title],
+      ...(i.format ? [['Formato', i.format] as [string, string]] : []),
+      ...(i.date ? [['Fecha', i.date] as [string, string]] : []),
+      ['Correo', i.email],
+      ['Monto', formatMXN(i.amount)],
+      ['Referencia', i.reference],
+    ],
+  }),
+});
+
+// Evento online (Holding / SEF Online): resumen de compra + bloque verde del grupo.
+export const sendEventGroupEmail = (input: {
+  name: string;
+  email: string;
+  reference: string;
+  groups: GroupInviteEmailCard[];
+  title: string;
+  eventDate: string;
+  eventFormat: string;
+  amount: number;
+}): Promise<unknown> => {
+  const { name, email, reference, groups } = input;
+  const summary = hubspotSummary({
+    title: input.title,
+    format: input.eventFormat,
+    date: input.eventDate,
+    email,
+    amount: input.amount,
+    reference,
+    description:
+      'Tu lugar quedó reservado. Únete al grupo de WhatsApp para recibir el enlace de acceso al evento. Conserva esta información como referencia de tu compra.',
+  });
+  const html = emailShell({
+    eyebrow: 'Compra confirmada',
+    badge: 'Pagado',
+    title: `Tu lugar está<br/>${accent('confirmado.')}`,
+    lead: `Hola ${name}, gracias por tu compra. Únete al grupo de WhatsApp para recibir el enlace de acceso al evento y todos los detalles.`,
+    content: `
+      ${summary.band}
+      ${groups.map(groupInviteBlock).join('')}
+      ${summary.panel}
+    `,
+    footerMeta: { left: `Ref. ${reference}`, right: formatDateTimeEs(new Date()) },
+    preheader: 'Únete al grupo de WhatsApp de tu evento.',
+  });
+  return sendWithAttachments(email, 'Tu lugar está confirmado - Diego Díaz', html, groupAttachments(groups));
+};
+
+// Evento presencial: resumen de compra + tarjeta(s) del boleto con QR.
 export const sendEventTicketsEmail = (input: {
   name: string;
   email: string;
@@ -517,15 +624,28 @@ export const sendEventTicketsEmail = (input: {
   tickets: Array<ReceiptTicketCard & { qrPng: Buffer }>;
 }): Promise<unknown> => {
   const { name, email, reference, tickets } = input;
+  const first = tickets[0];
+  const total = tickets.reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
+  const summary = hubspotSummary({
+    title: first?.eventTitle ?? '',
+    format: first?.eventFormat ?? '',
+    date: first?.eventDate ?? '',
+    email,
+    amount: total,
+    reference,
+    description:
+      'Tu lugar quedó reservado. El QR de cada boleto es único e intransferible; también puedes abrirlo desde el enlace "Ver mi boleto".',
+  });
   const html = emailShell({
-    eyebrow: 'Registro confirmado',
-    badge: 'Confirmado',
+    eyebrow: 'Compra confirmada',
+    badge: 'Pagado',
     title: `Tu lugar está<br/>${accent('confirmado.')}`,
     lead: `Hola ${name}, gracias por tu compra. ${tickets.length === 1 ? 'Este es tu boleto' : `Estos son tus ${tickets.length} boletos`} de acceso: presenta el código QR en la entrada del evento.`,
     content: `
+      ${summary.band}
       <div style="margin:0 0 14px;font-size:10px;letter-spacing:2.4px;text-transform:uppercase;color:#9b9185;">&#8212; ${tickets.length === 1 ? 'Tu boleto' : 'Tus boletos'}</div>
       ${tickets.map((t) => ticketCard(t, reference)).join('')}
-      <p style="margin:18px 0 0;font-size:13px;line-height:1.6;color:#5f574f;">El QR de cada boleto es único e intransferible; también puedes abrirlo desde el enlace "Ver mi boleto".</p>
+      ${summary.panel}
     `,
     footerMeta: { left: `Ref. ${reference}`, right: formatDateTimeEs(new Date()) },
     preheader: 'Tu boleto con QR de acceso está listo.',

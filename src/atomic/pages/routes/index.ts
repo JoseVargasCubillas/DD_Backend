@@ -21,6 +21,7 @@ import analyticsRoutes from './analytics.routes.js';
 import whatsappRoutes from './whatsapp.routes.js';
 import ticketRoutes from './ticket.routes.js';
 import integrationsRoutes from './integrations.routes.js';
+import eventGroupRoutes from './event-group.routes.js';
 
 export const apiRoutes = Router();
 
@@ -47,3 +48,4 @@ apiRoutes.use('/analytics', analyticsRoutes);
 apiRoutes.use('/whatsapp', whatsappRoutes);
 apiRoutes.use('/tickets', ticketRoutes);
 apiRoutes.use('/integrations', integrationsRoutes);
+apiRoutes.use('/event-groups', eventGroupRoutes);

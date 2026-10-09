@@ -36,7 +36,8 @@ import {
   findActiveTicketForEvent,
   renderTicketQrBuffer,
 } from './ticket.service.js';
-import { sendEventTicketsEmail } from './email.service.js';
+import { sendEventTicketsEmail, sendEventGroupEmail } from './email.service.js';
+import { detectGroupProduct, groupLabel, isGroupConfigured, issueGroupInvite, cardFromToken, GroupKey } from './event-group.service.js';
 
 const API = 'https://api.hubapi.com';
 const OVERLAP_MS = 2 * 60 * 1000;
@@ -262,8 +263,38 @@ const buildCards = async (tickets: IEventTicketDocument[]) =>
     qrPng: await renderTicketQrBuffer(t),
   })));
 
+// Eventos online con grupo de WhatsApp: manda (o reintenta) el correo con el
+// bloque verde de un solo uso.
+const deliverGroupEmail = async (record: IHubspotSyncDocument): Promise<boolean> => {
+  if (!record.groupKey || !record.inviteToken || !record.attendeeEmail) return false;
+  try {
+    const card = await cardFromToken(record.inviteToken, record.groupKey as GroupKey);
+    await sendEventGroupEmail({
+      name: record.attendeeName || record.attendeeEmail.split('@')[0],
+      email: record.attendeeEmail,
+      reference: formatTicketOrderRef(`hubspot:${record.dealId}`),
+      groups: [card],
+      title: record.eventTitle || groupLabel(record.groupKey as GroupKey),
+      eventDate: record.eventDateLabel || '',
+      eventFormat: record.eventFormat || 'Online',
+      amount: record.amount ?? 0,
+    });
+    record.emailSentAt = new Date().toISOString();
+    record.emailLastError = '';
+    await record.save();
+    return true;
+  } catch (err) {
+    record.emailAttempts = (record.emailAttempts ?? 0) + 1;
+    record.emailLastError = String((err as Error).message ?? err).slice(0, 300);
+    await record.save();
+    log(`correo de grupo falló (${record.attendeeEmail}, intento ${record.emailAttempts}): ${record.emailLastError}`);
+    return false;
+  }
+};
+
 // Manda (o reintenta) el correo de un item ya emitido.
 const deliverEmail = async (record: IHubspotSyncDocument): Promise<boolean> => {
+  if (record.groupKey) return deliverGroupEmail(record);
   const folios = record.folios ?? [];
   const tickets: IEventTicketDocument[] = [];
   for (const folio of folios) {
@@ -359,6 +390,64 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
 
   for (const c of candidates) {
     const { parsed } = c;
+    // Holding y SEF Online no llevan boleto: reciben el bloque verde para unirse al
+    // grupo de WhatsApp (un solo uso). Sin enlace configurado quedan pendientes y
+    // salen solos cuando se configure.
+    const groupKey = detectGroupProduct(parsed.name, parsed.tier === 'Online' ? 'online' : '');
+    if (groupKey) {
+      if (!isGroupConfigured(groupKey)) {
+        summary.pendingEvent += 1;
+        if (!c.pending) {
+          log(`negocio ${deal.id} · "${c.props.name}" → PENDIENTE: falta el enlace del grupo de WhatsApp de ${groupLabel(groupKey)} (WHATSAPP_GROUP_*_URL)`);
+          if (!dryRun) {
+            await HubspotSync.create({
+              kind: 'item', dealId: deal.id, lineItemId: c.id, status: 'pending_event',
+              reason: `sin enlace del grupo de ${groupLabel(groupKey)}`,
+              productName: String(c.props.name ?? ''), attendeeEmail: email, attendeeName: attendee.name,
+            });
+          }
+        }
+        continue;
+      }
+      summary.issued += 1;
+      if (dryRun) {
+        log(`[dry] negocio ${deal.id} · ${email} · ${groupLabel(groupKey)} → invitación al grupo de WhatsApp`);
+        continue;
+      }
+      const card = await issueGroupInvite({ ref: `hubspot:${deal.id}:${c.id}`, key: groupKey, email, name: attendee.name });
+      if (!card) continue;
+      // Datos para el resumen de compra del correo (igual que el recibo de la web).
+      const groupEvent = await findEvent(parsed.name, parsed.date);
+      const eventDateLabel = groupEvent
+        ? formatEventDateLabel(groupEvent.startDate, groupEvent.endDate)
+        : formatEventDateLabel(new Date(`${parsed.date}T12:00:00-06:00`));
+      const fields = {
+        status: 'issued' as const,
+        reason: '',
+        productName: String(c.props.name ?? ''),
+        attendeeEmail: email,
+        attendeeName: attendee.name,
+        groupKey,
+        inviteToken: card.token,
+        eventTitle: groupEvent?.title || groupLabel(groupKey),
+        eventDateLabel,
+        eventFormat: groupEvent?.location ? `Online · ${groupEvent.location}` : 'Online',
+        amount: Number(c.props.price) || 0,
+        emailSentAt: null,
+        emailAttempts: 0,
+      };
+      let groupRecord: IHubspotSyncDocument;
+      if (c.pending) {
+        Object.assign(c.pending, fields);
+        groupRecord = await c.pending.save();
+      } else {
+        groupRecord = await HubspotSync.create({ kind: 'item', dealId: deal.id, lineItemId: c.id, ...fields });
+      }
+      log(`negocio ${deal.id} · ${email} · invitación al grupo de ${groupLabel(groupKey)}`);
+      if (await deliverGroupEmail(groupRecord)) summary.emailsSent += 1;
+      continue;
+    }
+
     if (parsed.tier === 'Online') { await markSkipped(c, 'entrada Online'); continue; }
     // Red de seguridad: un producto "SEF ONLINE | General" es un error de captura.
     if (/online/i.test(parsed.name)) { await markSkipped(c, 'el nombre del producto indica online'); continue; }
