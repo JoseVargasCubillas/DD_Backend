@@ -40,7 +40,10 @@ const normalizePhoneDigits = (phone: string): string => String(phone || '').repl
 // eso arriesgaba mezclar a dos personas distintas y perder el correo real de
 // una de ellas. Ver flagPossiblePhoneDuplicate para lo que si se hace con una
 // coincidencia de telefono: avisar, nunca fusionar solo.
-const findExistingCheckoutUser = async (email: string): Promise<IUserDocument | null> => User.findOne({ email });
+const findExistingCheckoutUser = async (email: string): Promise<IUserDocument | null> => {
+  const normalized = normalizeEmail(email);
+  return (await User.findOne({ email: normalized })) ?? (normalized === email ? null : User.findOne({ email }));
+};
 
 // Best-effort, no bloquea el checkout si falla: si el telefono de una cuenta
 // recien creada coincide con el de otra cuenta distinta, deja una nota
@@ -235,6 +238,7 @@ export const updateProfile = async (id: string, data: Partial<IUserDocument>): P
 export const adminUpdateUser = async (id: string, data: Partial<IUserDocument>) => {
   const allowed = ['name', 'email', 'phone', 'bio', 'avatar', 'role', 'plan', 'isActive', 'notes', 'contactStatus', 'marketingStatus'];
   const updates = Object.fromEntries(Object.entries(data).filter(([k]) => allowed.includes(k)));
+  if (typeof updates.email === 'string') updates.email = normalizeEmail(updates.email);
   const user = await User.findByIdAndUpdate(id, updates, { new: true });
   if (!user) throw makeError('User not found', 404);
   return sanitize(user);

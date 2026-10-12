@@ -32,8 +32,20 @@ interface AdminCreateUserInput {
 const makeError = (message: string, statusCode: number): Error =>
   Object.assign(new Error(message), { statusCode });
 
-export const register = async ({ name, email, password }: RegisterInput): Promise<AuthResult> => {
-  const exists = await User.findOne({ email });
+const normalizeEmail = (email: string): string => String(email ?? '').trim().toLowerCase();
+
+// Busca por correo sin distinguir mayúsculas: primero el valor normalizado y,
+// para registros antiguos guardados con otra capitalización, el valor tal cual.
+const findUserByEmail = async (email: string, extra: Record<string, unknown> = {}) => {
+  const normalized = normalizeEmail(email);
+  const byNormalized = await User.findOne({ email: normalized, ...extra }).select('+password');
+  if (byNormalized || normalized === email) return byNormalized;
+  return User.findOne({ email, ...extra }).select('+password');
+};
+
+export const register = async ({ name, email: rawEmail, password }: RegisterInput): Promise<AuthResult> => {
+  const email = normalizeEmail(rawEmail);
+  const exists = await findUserByEmail(email);
   if (exists) throw makeError('Email already in use', 409);
 
   const hashed = await hashPassword(password);
@@ -46,7 +58,7 @@ export const register = async ({ name, email, password }: RegisterInput): Promis
 };
 
 export const login = async ({ email, password }: LoginInput): Promise<AuthResult> => {
-  const user = await User.findOne({ email }).select('+password');
+  const user = await findUserByEmail(email);
   if (!user || !(await comparePassword(password, user.password)))
     throw makeError('Invalid credentials', 401);
 
@@ -82,13 +94,14 @@ export const refreshTokens = async (token: string): Promise<{ accessToken: strin
  */
 export const adminCreateUser = async ({
   name,
-  email,
+  email: rawEmail,
   role = 'user',
   tagIds = [],
   courseIds = [],
   marketingStatus = 'never_subscribed',
 }: AdminCreateUserInput) => {
-  const exists = await User.findOne({ email });
+  const email = normalizeEmail(rawEmail);
+  const exists = await findUserByEmail(email);
   if (exists) throw makeError('Email already in use', 409);
 
   const tempPassword = generateTempPassword();
@@ -155,7 +168,7 @@ export const adminCreateUser = async ({
  * existen en la base. El controller siempre responde con un mensaje genérico.
  */
 export const forgotPassword = async (email: string): Promise<void> => {
-  const user = await User.findOne({ email });
+  const user = await findUserByEmail(email);
   if (!user) return;
 
   const rawToken = crypto.randomBytes(32).toString('hex');
@@ -175,7 +188,7 @@ export const forgotPassword = async (email: string): Promise<void> => {
 interface ResetPasswordInput { token: string; email: string; password: string }
 
 export const resetPassword = async ({ token, email, password }: ResetPasswordInput): Promise<void> => {
-  const user = await User.findOne({ email, resetPasswordToken: hashToken(token) });
+  const user = await findUserByEmail(email, { resetPasswordToken: hashToken(token) });
   const expiresAt = user?.resetPasswordExpires ? new Date(user.resetPasswordExpires).getTime() : 0;
 
   if (!user || !expiresAt || Date.now() > expiresAt) {
