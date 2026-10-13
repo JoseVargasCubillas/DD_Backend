@@ -19,6 +19,7 @@ const entityTables = [
   'course_comments',
   'books',
   'email_queue_jobs',
+  'email_campaigns',
   'leads',
   'wa_clicks',
   'event_tickets',

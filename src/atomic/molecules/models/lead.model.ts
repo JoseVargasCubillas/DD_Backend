@@ -18,6 +18,8 @@ export interface ILeadDocument extends SqlDocumentMethods<ILeadDocument> {
   phone?: string;
   meta?: Record<string, unknown>;
   emailedAt?: Date | string | null;
+  // Baja de campañas masivas (webhook de Mailchimp). Se excluye de los segmentos.
+  unsubscribed?: boolean;
   createdAt: Date | string;
   updatedAt: Date | string;
 }

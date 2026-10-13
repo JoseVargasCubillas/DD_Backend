@@ -4,6 +4,7 @@ import { connectDB } from './config/database.js';
 import { startEmailQueueWorker } from './atomic/organisms/services/email-queue.service.js';
 import { startPackageExpirationWorker } from './atomic/organisms/services/package-expiration.service.js';
 import { startHubspotSyncWorker } from './atomic/organisms/services/hubspot.service.js';
+import { recoverInterruptedCampaigns } from './atomic/organisms/services/email-campaign.service.js';
 
 const PORT = Number(process.env.PORT) || 5000;
 
@@ -12,6 +13,9 @@ connectDB()
     startEmailQueueWorker();
     startPackageExpirationWorker();
     startHubspotSyncWorker();
+    recoverInterruptedCampaigns().catch((err: Error) =>
+      console.error('[email] No se pudieron recuperar envíos interrumpidos:', err.message),
+    );
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT} [${process.env.NODE_ENV ?? 'development'}]`);
     });

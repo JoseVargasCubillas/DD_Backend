@@ -73,6 +73,18 @@ export const env = {
     pass: process.env.MAIL_PASS ?? '',
     from: process.env.MAIL_FROM ?? '',
   },
+  // Campañas masivas (panel /admin/email). El SMTP de `mail` queda solo para
+  // correos transaccionales (compras, accesos, boletos, reset de contraseña).
+  mailchimp: {
+    apiKey: process.env.MAILCHIMP_API_KEY ?? '',
+    // Datacenter ("us22"): si no se define, se toma del sufijo de la API key.
+    serverPrefix:
+      process.env.MAILCHIMP_SERVER_PREFIX ?? (process.env.MAILCHIMP_API_KEY ?? '').split('-')[1] ?? '',
+    audienceId: process.env.MAILCHIMP_AUDIENCE_ID ?? '',
+    fromName: process.env.MAILCHIMP_FROM_NAME ?? 'Diego Díaz',
+    replyTo: process.env.MAILCHIMP_REPLY_TO ?? 'servicios@diegodiaz.mx',
+    webhookSecret: process.env.MAILCHIMP_WEBHOOK_SECRET ?? '',
+  },
   envia: {
     env: process.env.ENVIA_ENV ?? 'sandbox',
     token: process.env.ENVIA_TOKEN ?? '',
