@@ -33,7 +33,6 @@ const userOriginTags = (u: IUserDocument): string[] => {
 const leadOriginTags = (source?: string): string[] => [`dd-lead-${source || 'other'}`];
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MAX_CUSTOM_RECIPIENTS = 500;
 
 // Fuentes que consideramos "leads editoriales" (recursos descargables públicos)
 const GUIDE_LEAD_SOURCES = [
@@ -117,14 +116,23 @@ const resolveCustomTargets = async (
   const invalid: string[] = [];
   const seen = new Set<string>();
   const valid: string[] = [];
+  // Nombre que viene en la lista (p. ej. de un CSV): tiene prioridad sobre el de la BD.
+  const providedNames = new Map<string, string>();
 
+  // Acepta correos sueltos ("a@x.com") o contactos ({ email, name }).
   for (const raw of Array.isArray(rawEmails) ? rawEmails : []) {
-    const email = String(raw ?? '').trim().toLowerCase();
+    const entry =
+      raw && typeof raw === 'object'
+        ? (raw as { email?: unknown; name?: unknown })
+        : { email: raw, name: '' };
+    const email = String(entry.email ?? '').trim().toLowerCase();
     if (!email) continue;
     if (!EMAIL_RE.test(email)) {
       invalid.push(email);
       continue;
     }
+    const name = String(entry.name ?? '').trim();
+    if (name && !providedNames.has(email)) providedNames.set(email, name);
     if (!seen.has(email)) {
       seen.add(email);
       valid.push(email);
@@ -156,7 +164,7 @@ const resolveCustomTargets = async (
   const targets = valid
     .filter((email) => !unsubscribed.has(email))
     .map((email) => ({
-      name: names.get(email) ?? '',
+      name: providedNames.get(email) ?? names.get(email) ?? '',
       email,
       // Correos que no existen en tu base: se marcan como carga manual.
       tags: originTags.has(email) ? Array.from(originTags.get(email)!) : ['dd-manual'],
@@ -179,6 +187,8 @@ interface BroadcastBody {
   segmentLabel?: string;
   // Solo con segment === 'custom'.
   emails?: string[];
+  // Solo con segment === 'custom': contactos con nombre (de un CSV o pegados). Sin tope de cantidad.
+  recipients?: Array<{ email: string; name?: string }>;
   // Solo con source === 'mailchimp'. Sin `audienceSegmentId` es TODA la audiencia.
   audienceId?: string;
   audienceSegmentId?: number | string | null;
@@ -211,14 +221,11 @@ const planWebSend = async (
   let label = body.segmentLabel ?? segment;
 
   if (segment === 'custom') {
-    const custom = await resolveCustomTargets(body.emails);
+    const custom = await resolveCustomTargets(body.recipients ?? body.emails);
     if (custom.invalid.length > 0) {
       return {
         error: `Hay correos con formato inválido: ${custom.invalid.slice(0, 5).join(', ')}${custom.invalid.length > 5 ? '…' : ''}`,
       };
-    }
-    if (custom.targets.length > MAX_CUSTOM_RECIPIENTS) {
-      return { error: `Máximo ${MAX_CUSTOM_RECIPIENTS} destinatarios personalizados por envío.` };
     }
     targets = custom.targets;
     excluded = custom.excluded;
@@ -243,7 +250,8 @@ const planWebSend = async (
     source: 'web',
     totalTargets: targets.length,
     excluded,
-    needsConfirmation: segment === 'all',
+    // Sin tope en las listas personalizadas, las grandes exigen la misma frase que "Todos".
+    needsConfirmation: segment === 'all' || (segment === 'custom' && targets.length > MASS_THRESHOLD),
     run: (dryRun) => mailchimp.sendCampaign({ subject, html, recipients: targets, dryRun }),
   };
 };
