@@ -18,6 +18,7 @@ import { getShippingRate, getShippingRates, generateShippingLabel, ShippingPacka
 import { findOfferByIdentity, isOfferActive } from './offer.service.js';
 import { getCheckoutUser, CheckoutCustomer, markIncompletePayment, clearIncompletePayment } from './user.service.js';
 import { issueWhatsappInviteToken, buildWhatsappInviteUrl } from './whatsapp-invite.service.js';
+import { applyPromotion, registerPromotionUse } from './promotion.service.js';
 import { buildEventTicketTitle, formatEventDateLabel, formatEventFormatLabel, sanitizeTicketLabel } from '../../atoms/helpers/event-ticket.helper.js';
 import { createTicketsForOrder, renderTicketQrBuffer } from './ticket.service.js';
 import { detectGroupProduct, issueGroupInvite, GroupInviteCard } from './event-group.service.js';
@@ -37,12 +38,16 @@ interface OrderItemInput {
   heightCm?: number;
   offerId?: string;
   packageId?: string;
+  courseId?: string;
   plan?: string;
   eventDate?: string;
   eventFormat?: string;
 }
 interface CheckoutContactInput { name?: string; email?: string; phone?: string }
 interface ShippingSelectionInput { carrier?: string; service?: string }
+// Stripe rechaza cargos menores a ~$10 MXN; un código que deje el total entre
+// $0.01 y ese mínimo no se puede cobrar.
+const STRIPE_MIN_CHARGE_MXN = 10;
 const ACADEMIA_ACCESS_TYPES = new Set(['academia', 'offer']);
 // Todo lo que se puede comprar sin sesion iniciada — cada uno crea/reutiliza
 // una cuenta real (ver getCheckoutUser) en vez del guest-checkout viejo que
@@ -139,6 +144,7 @@ const normalizeOrderItems = async (items: OrderItemInput[]): Promise<OrderItemIn
           throw makeError('Oferta no disponible', 400);
         }
         const packageId = offer.targetType === 'package' ? String(offer.targetId || '') : '';
+        const courseId = offer.targetType === 'course' ? String(offer.targetId || '') : '';
 
         return {
           type: 'academia',
@@ -148,6 +154,7 @@ const normalizeOrderItems = async (items: OrderItemInput[]): Promise<OrderItemIn
           quantity: 1,
           offerId: String(offer._id),
           packageId,
+          courseId,
           plan: String(offer.plan || 'pro'),
         };
       }
@@ -348,6 +355,21 @@ export const quoteShipping = async (items: OrderItemInput[], shipping: IOrderShi
   return getShippingRates(shipping, packages);
 };
 
+// Cotización del resumen del pedido (subtotal / descuento / total) con el
+// mismo catálogo autoritativo del intent. Permite al checkout validar un
+// código antes de crear el PaymentIntent sin confiar en precios del cliente.
+export const quoteOrder = async (items: OrderItemInput[], promoCode?: string) => {
+  const normalizedItems = await normalizeOrderItems(items);
+  const subtotal = normalizedItems.reduce((sum, i) => sum + i.price * (i.quantity ?? 1), 0);
+  const promotion = promoCode?.trim() ? await applyPromotion(promoCode, normalizedItems) : null;
+  const discount = promotion?.discount ?? 0;
+  const total = Math.max(0, Math.round((subtotal - discount) * 100) / 100);
+  if (total > 0 && total < STRIPE_MIN_CHARGE_MXN) {
+    throw makeError(`El descuento deja un total menor al mínimo cobrable ($${STRIPE_MIN_CHARGE_MXN} MXN)`, 400);
+  }
+  return { normalizedItems, subtotal, discount, total, promotion };
+};
+
 // Pedidos con envío (productos físicos, ej. libros) calculan subtotal + envío + IVA por separado.
 // Los pedidos existentes (cursos, suscripciones) conservan su comportamiento: el precio del item
 // ya es el total a cobrar, sin desglose de impuestos, para no alterar montos ya en producción.
@@ -357,11 +379,11 @@ export const createPaymentIntent = async (
   shipping?: IOrderShippingAddress,
   customer?: CheckoutContactInput,
   shippingSelection?: ShippingSelectionInput,
+  promoCode?: string,
 ) => {
-  const normalizedItems = await normalizeOrderItems(items);
+  const { normalizedItems, subtotal, discount, promotion } = await quoteOrder(items, promoCode);
   const requiresAccount = normalizedItems.some((i) => GUEST_ACCOUNT_TYPES.has(i.type));
   const { user, contact } = await resolveOrderOwner(userId, customer, requiresAccount);
-  const subtotal = normalizedItems.reduce((sum, i) => sum + i.price * (i.quantity ?? 1), 0);
   const requiresShipping = Boolean(shipping) || normalizedItems.some((i) => i.type === 'product');
 
   // El envio ya esta incluido en el precio del libro — el costo real se paga
@@ -382,7 +404,10 @@ export const createPaymentIntent = async (
   }
 
   const tax = 0;
-  const total = subtotal + tax;
+  const total = Math.max(0, Math.round((subtotal + tax - discount) * 100) / 100);
+  const promoFields = promotion
+    ? { discount, promotionCode: promotion.code, promotionId: promotion.promotionId }
+    : { discount: 0, promotionCode: '', promotionId: '' };
 
   // Deja rastro en el contacto de que llego al paso de pago de un producto/
   // oferta especifico, sin esperar a que el pago se confirme — asi un lead
@@ -394,45 +419,55 @@ export const createPaymentIntent = async (
     await markIncompletePayment(user, item.title);
   }
 
-  if (!isStripeConfigured()) {
-    const demoPaymentIntentId = `demo_pi_${Date.now()}`;
+  // Un código del 100% (cortesías) deja el total en $0: no hay nada que
+  // cobrar en Stripe, así que la orden se confirma directo igual que en demo.
+  const isFreeOrder = total === 0;
+  if (!isStripeConfigured() || isFreeOrder) {
+    const demoPaymentIntentId = isFreeOrder ? `free_pi_${Date.now()}` : `demo_pi_${Date.now()}`;
     const order = await Order.create({
       user, contact, items: normalizedItems, subtotal, tax, shippingCost, shipping: shipping ?? null,
-      shippingCarrier, shippingService, total,
+      shippingCarrier, shippingService, total, ...promoFields,
       status: ORDER_STATUS.COMPLETED,
       stripePaymentIntentId: demoPaymentIntentId,
       paidAt: new Date(),
-      notes: 'Pago confirmado en modo demo local por falta de llaves reales de Stripe.',
+      notes: isFreeOrder
+        ? `Acceso sin costo: código ${promotion?.code} cubrió el 100% del pedido.`
+        : 'Pago confirmado en modo demo local por falta de llaves reales de Stripe.',
     });
     await sendReceiptIfEventOrder(order);
     await generateOrderShippingLabelIfNeeded(order);
     await grantAcademiaAccess(order);
+    await registerPromotionUse(order.promotionId);
     if (user) await User.findByIdAndUpdate(user, { contactStatus: 'customer' } as Partial<IUserDocument>);
     for (const item of guestAccountItems) await clearIncompletePayment(user, item.title);
-    return { clientSecret: `demo_${order._id}`, orderId: order._id, subtotal, tax, shippingCost, total };
+    return {
+      clientSecret: isFreeOrder ? `free_${order._id}` : `demo_${order._id}`,
+      orderId: order._id, subtotal, tax, shippingCost, discount, total, promotion,
+    };
   }
 
   // itemsSummary vive en el metadata del PaymentIntent para que la transaccion
   // sea identificable directamente desde el Dashboard de Stripe (sin tener que
   // cruzar el payment_intent.id contra la orden en la DB primero).
   const itemsSummary = normalizedItems.map((i) => i.title).join(', ').slice(0, 480);
+  const promoMetadata: Record<string, string> = promotion ? { promoCode: promotion.code, discount: String(discount) } : {};
   const intent = await stripe.paymentIntents.create({
     amount: Math.round(total * 100),
     currency: 'mxn',
-    metadata: { userId: user, source: 'web', items: itemsSummary },
+    metadata: { userId: user, source: 'web', items: itemsSummary, ...promoMetadata },
   });
   const order = await Order.create({
     user, contact, items: normalizedItems, subtotal, tax, shippingCost, shipping: shipping ?? null,
-    shippingCarrier, shippingService, total,
+    shippingCarrier, shippingService, total, ...promoFields,
     status: ORDER_STATUS.PENDING,
     stripePaymentIntentId: intent.id,
   });
   // El orderId solo existe tras crear la orden (depende de intent.id), asi que
   // se agrega al metadata con un update en vez de en el create de arriba.
   await stripe.paymentIntents.update(intent.id, {
-    metadata: { userId: user, source: 'web', items: itemsSummary, orderId: String(order._id) },
+    metadata: { userId: user, source: 'web', items: itemsSummary, orderId: String(order._id), ...promoMetadata },
   });
-  return { clientSecret: intent.client_secret, orderId: order._id, subtotal, tax, shippingCost, total };
+  return { clientSecret: intent.client_secret, orderId: order._id, subtotal, tax, shippingCost, discount, total, promotion };
 };
 
 // El webhook de Stripe y POST /payments/confirm pueden llegar casi al mismo
@@ -468,6 +503,7 @@ const confirmPaymentOnce = async (paymentIntentId: string): Promise<IOrderDocume
   await generateOrderShippingLabelIfNeeded(saved);
   await sendReceiptIfEventOrder(saved);
   await grantAcademiaAccess(saved);
+  await registerPromotionUse(saved.promotionId);
   if (saved.user) {
     // grantAcademiaAccess ya marca 'customer' para ofertas de Academia — este
     // flip cubre libros/eventos, que no pasan por ahi pero igual ahora tienen

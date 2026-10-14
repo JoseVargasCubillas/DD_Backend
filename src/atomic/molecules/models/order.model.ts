@@ -14,6 +14,7 @@ interface OrderItem {
   // Solo para type === 'academia' — ver grantAcademiaAccess en payment.service.ts.
   offerId?: string;
   packageId?: string;
+  courseId?: string;
   plan?: string;
   // Solo para type === 'event' — edición comprada (ver buildEventTicketTitle).
   eventDate?: string;
@@ -54,6 +55,11 @@ export interface IOrderDocument extends SqlDocumentMethods<IOrderDocument> {
   shippingLabelUrl: string;
   shippingTrackUrl: string;
   total: number;
+  // Código de descuento aplicado en el checkout (ver applyPromotion en
+  // promotion.service.ts). `discount` ya está restado de `total`.
+  discount: number;
+  promotionCode: string;
+  promotionId: string;
   currency: string;
   status: string;
   stripePaymentIntentId: string;
@@ -77,6 +83,9 @@ export const Order = createSqlModel<IOrderDocument>({
     shippingTrackingNumber: '',
     shippingLabelUrl: '',
     shippingTrackUrl: '',
+    discount: 0,
+    promotionCode: '',
+    promotionId: '',
     currency: 'MXN',
     status: ORDER_STATUS.PENDING,
     stripePaymentIntentId: '',

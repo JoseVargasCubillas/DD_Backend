@@ -13,10 +13,22 @@ export const createIntent: RequestHandler = async (req, res) => {
       req.body.shipping,
       req.body.customer,
       req.body.shippingSelection,
+      req.body.promoCode,
     );
     success(res, result);
   } catch (err: any) {
-    err.statusCode === 400 ? badRequest(res, err.message) : serverError(res, err);
+    if (err.statusCode === 400 || err.statusCode === 404 || err.statusCode === 410) return badRequest(res, err.message);
+    serverError(res, err);
+  }
+};
+
+export const quoteOrder: RequestHandler = async (req, res) => {
+  try {
+    const { normalizedItems: _items, ...quote } = await paymentService.quoteOrder(req.body.items, req.body.promoCode);
+    success(res, quote);
+  } catch (err: any) {
+    if (err.statusCode === 400 || err.statusCode === 404 || err.statusCode === 410) return badRequest(res, err.message);
+    serverError(res, err);
   }
 };
 

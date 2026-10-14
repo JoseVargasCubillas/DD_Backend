@@ -1,4 +1,4 @@
-import { Promotion, IPromotionDocument, PromotionScope } from '../../molecules/models/promotion.model.js';
+import { Promotion, IPromotionDocument, PromotionScope, PromotionType } from '../../molecules/models/promotion.model.js';
 import { Course } from '../../molecules/models/course.model.js';
 import { Package } from '../../molecules/models/package.model.js';
 
@@ -55,4 +55,64 @@ export const validatePromotion = async (code: string): Promise<IPromotionDocumen
   if (promo.expiresAt && new Date(String(promo.expiresAt)).getTime() < Date.now()) throw err('Código expirado', 410);
   if (promo.maxUses > 0 && promo.usedCount >= promo.maxUses) throw err('Código agotado', 410);
   return promo;
+};
+
+// Lo mínimo que necesita el cálculo de descuento de un item ya normalizado
+// por payment.service (precio autoritativo del catálogo, nunca del cliente).
+export interface DiscountableItem {
+  type: string;
+  refId: string;
+  price: number;
+  quantity?: number;
+  packageId?: string;
+  courseId?: string;
+}
+
+export interface AppliedPromotion {
+  promotionId: string;
+  code: string;
+  description: string;
+  type: PromotionType;
+  value: number;
+  discount: number;
+}
+
+const roundMoney = (n: number): number => Math.round(n * 100) / 100;
+
+const itemMatchesScope = (promo: IPromotionDocument, item: DiscountableItem): boolean => {
+  if (promo.scope === 'all') return true;
+  if (promo.scope === 'course') return (item.type === 'course' && item.refId === promo.targetId) || item.courseId === promo.targetId;
+  if (promo.scope === 'package') return item.packageId === promo.targetId;
+  return false;
+};
+
+// Valida el código y calcula cuánto descuenta sobre los items elegibles según
+// su alcance. El descuento nunca supera el subtotal elegible (un monto fijo
+// mayor al precio deja el item en $0, no en negativo).
+export const applyPromotion = async (code: string, items: DiscountableItem[]): Promise<AppliedPromotion> => {
+  const promo = await validatePromotion(code);
+  const eligible = items.filter((i) => itemMatchesScope(promo, i));
+  if (!eligible.length) throw err('Este código no aplica a los productos de tu pedido', 400);
+  const eligibleSubtotal = eligible.reduce((sum, i) => sum + i.price * Math.max(1, Number(i.quantity ?? 1)), 0);
+  const raw = promo.type === 'percentage' ? eligibleSubtotal * (Number(promo.value) / 100) : Number(promo.value);
+  const discount = roundMoney(Math.min(Math.max(raw, 0), eligibleSubtotal));
+  if (!(discount > 0)) throw err('Este código no genera descuento en tu pedido', 400);
+  return {
+    promotionId: String(promo._id),
+    code: promo.code,
+    description: promo.description || '',
+    type: promo.type,
+    value: Number(promo.value),
+    discount,
+  };
+};
+
+// Se llama sólo cuando el pago quedó confirmado (webhook / confirm), nunca al
+// crear el intent — un checkout abandonado no debe consumir usos del código.
+export const registerPromotionUse = async (promotionId: string): Promise<void> => {
+  if (!promotionId) return;
+  const promo = await Promotion.findById(promotionId);
+  if (!promo) return;
+  promo.usedCount = Number(promo.usedCount || 0) + 1;
+  await promo.save();
 };
