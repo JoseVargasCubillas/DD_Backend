@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { RequestHandler } from 'express';
 import { env } from '../../../config/env.js';
+import { verifyMailchimpSignature } from '../../atoms/helpers/mailchimp-signature.helper.js';
 import { User, IUserDocument } from '../../molecules/models/user.model.js';
 import { Lead } from '../../molecules/models/lead.model.js';
 import { EmailCampaign } from '../../molecules/models/email-campaign.model.js';
@@ -648,7 +649,18 @@ const secretMatches = (provided: unknown): boolean => {
 export const mailchimpWebhook: RequestHandler = async (req, res) => {
   try {
     if (!secretMatches(req.query.secret)) return forbidden(res, 'Forbidden');
+    // Mailchimp valida la URL con un GET (sin firma) al crear el webhook.
     if (req.method === 'GET') return success(res, { ok: true });
+
+    // Segunda capa (opcional): firma HMAC de Mailchimp sobre el cuerpo crudo.
+    const signingSecret = env.mailchimp.webhookSigningSecret;
+    if (
+      signingSecret &&
+      !verifyMailchimpSignature((req as any).rawBody, req.get('x-mailchimp-signature'), signingSecret)
+    ) {
+      console.warn('[mailchimp-webhook] Aviso rechazado: firma ausente, inválida o vencida.');
+      return forbidden(res, 'Forbidden');
+    }
 
     const { type, data } = (req.body ?? {}) as { type?: string; data?: { email?: string } };
     const email = data?.email?.trim().toLowerCase();

@@ -31,9 +31,16 @@ app.use(express.json({
   limit: '10mb',
   verify: (req: any, _res, buf) => {
     if (req.originalUrl?.endsWith('/payments/webhook')) req.rawBody = buf;
+    // La firma de Mailchimp se calcula sobre los bytes exactos del cuerpo.
+    if (req.originalUrl?.includes('/email/webhooks/mailchimp')) req.rawBody = buf;
   },
 }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({
+  extended: true,
+  verify: (req: any, _res, buf) => {
+    if (req.originalUrl?.includes('/email/webhooks/mailchimp')) req.rawBody = buf;
+  },
+}));
 
 app.use('/api/v1', globalLimiter, apiRoutes);
 

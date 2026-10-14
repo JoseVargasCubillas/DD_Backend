@@ -84,6 +84,9 @@ export const env = {
     fromName: process.env.MAILCHIMP_FROM_NAME ?? 'Diego Díaz',
     replyTo: process.env.MAILCHIMP_REPLY_TO ?? 'servicios@diegodiaz.mx',
     webhookSecret: process.env.MAILCHIMP_WEBHOOK_SECRET ?? '',
+    // Secreto de firma que Mailchimp muestra una sola vez al crear el webhook
+    // (opcional). Si está definido, cada aviso debe traer una firma válida.
+    webhookSigningSecret: process.env.MAILCHIMP_WEBHOOK_SIGNING_SECRET ?? '',
   },
   envia: {
     env: process.env.ENVIA_ENV ?? 'sandbox',
