@@ -1,9 +1,14 @@
 import { Book, IBookDocument } from '../../molecules/models/book.model.js';
-import { findBookCatalogEntry } from '../../molecules/models/book-catalog.constant.js';
+import { BOOK_CATALOG, findBookCatalogEntry } from '../../molecules/models/book-catalog.constant.js';
 
 const err = (m: string, c: number): Error => Object.assign(new Error(m), { statusCode: c });
 
 export const listBooks = async (): Promise<IBookDocument[]> => {
+  // Los libros de catálogo se crean al listar si aún no existen, para que
+  // aparezcan en el admin (p.ej. al elegirlos en una promoción) sin seed manual.
+  for (const entry of BOOK_CATALOG) {
+    if (!(await Book.findOne({ slug: entry.slug }))) await createFromCatalogIfKnown(entry.slug);
+  }
   const books = await Book.find({ isActive: true });
   return books.sort((a, b) => new Date(String(b.createdAt)).getTime() - new Date(String(a.createdAt)).getTime());
 };

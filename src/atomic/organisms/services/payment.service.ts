@@ -42,6 +42,8 @@ interface OrderItemInput {
   plan?: string;
   eventDate?: string;
   eventFormat?: string;
+  eventId?: string;
+  eventSlug?: string;
 }
 interface CheckoutContactInput { name?: string; email?: string; phone?: string }
 interface ShippingSelectionInput { carrier?: string; service?: string }
@@ -107,6 +109,14 @@ const normalizeOrderItems = async (items: OrderItemInput[]): Promise<OrderItemIn
           // el precio sigue siendo el del catálogo).
           const eventDate = sanitizeTicketLabel(item.eventDate);
           const eventFormat = sanitizeTicketLabel(item.eventFormat);
+          // Edición del admin a la que pertenece el boleto (por id o slug), para
+          // que los códigos de descuento limitados a un evento apliquen.
+          const linkedEvent = item.eventId || item.eventSlug
+            ? ((item.eventId && (await Event.findById(String(item.eventId)))) ||
+               (item.eventSlug && (await Event.findOne({ slug: String(item.eventSlug) }))) ||
+               null)
+            : null;
+          const linkedEventId = linkedEvent ? String(linkedEvent._id) : '';
           return {
             type: 'event',
             refId,
@@ -115,6 +125,7 @@ const normalizeOrderItems = async (items: OrderItemInput[]): Promise<OrderItemIn
             quantity,
             ...(eventDate && { eventDate }),
             ...(eventFormat && { eventFormat }),
+            ...(linkedEventId && { eventId: linkedEventId }),
           };
         }
 
@@ -134,6 +145,7 @@ const normalizeOrderItems = async (items: OrderItemInput[]): Promise<OrderItemIn
           quantity,
           ...(eventDate && { eventDate }),
           ...(eventFormat && { eventFormat }),
+          eventId: String(event._id),
         };
       }
 

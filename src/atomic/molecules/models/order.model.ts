@@ -18,6 +18,7 @@ interface OrderItem {
   plan?: string;
   // Solo para type === 'event' — edición comprada (ver buildEventTicketTitle).
   eventDate?: string;
+  eventId?: string;
   eventFormat?: string;
 }
 

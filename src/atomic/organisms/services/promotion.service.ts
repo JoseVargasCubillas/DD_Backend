@@ -1,15 +1,25 @@
 import { Promotion, IPromotionDocument, PromotionScope, PromotionType } from '../../molecules/models/promotion.model.js';
 import { Course } from '../../molecules/models/course.model.js';
 import { Package } from '../../molecules/models/package.model.js';
+import { Offer } from '../../molecules/models/offer.model.js';
+import { Event } from '../../molecules/models/event.model.js';
+import { Book } from '../../molecules/models/book.model.js';
 
 const err = (m: string, c: number): Error => Object.assign(new Error(m), { statusCode: c });
 
+const SCOPES: PromotionScope[] = ['all', 'course', 'package', 'offer', 'event', 'book'];
+// Eventos y libros pueden dejar el objetivo vacío: aplica a todos los de ese tipo.
+const TARGET_OPTIONAL: PromotionScope[] = ['all', 'event', 'book'];
+
 const normalizePromotionInput = async (input: Partial<IPromotionDocument>) => {
-  const scope: PromotionScope = input.scope === 'course' || input.scope === 'package' ? input.scope : 'all';
+  const scope: PromotionScope = SCOPES.includes(input.scope as PromotionScope) ? (input.scope as PromotionScope) : 'all';
   const targetId = scope === 'all' ? '' : String(input.targetId || '').trim();
-  if (scope !== 'all' && !targetId) throw err('Selecciona el curso o paquete de la promoción', 400);
+  if (!TARGET_OPTIONAL.includes(scope) && !targetId) throw err('Selecciona el producto de la promoción', 400);
   if (scope === 'course' && !(await Course.findById(targetId))) throw err('Curso no encontrado', 400);
   if (scope === 'package' && !(await Package.findById(targetId))) throw err('Paquete no encontrado', 400);
+  if (scope === 'offer' && !(await Offer.findById(targetId))) throw err('Oferta no encontrada', 400);
+  if (scope === 'event' && targetId && !(await Event.findById(targetId))) throw err('Evento no encontrado', 400);
+  if (scope === 'book' && targetId && !(await Book.findById(targetId))) throw err('Libro no encontrado', 400);
   if (input.expiresAt) {
     const expiresAt = new Date(String(input.expiresAt));
     if (Number.isNaN(expiresAt.getTime())) throw err('Fecha de vencimiento inválida', 400);
@@ -66,6 +76,8 @@ export interface DiscountableItem {
   quantity?: number;
   packageId?: string;
   courseId?: string;
+  offerId?: string;
+  eventId?: string;
 }
 
 export interface AppliedPromotion {
@@ -83,6 +95,9 @@ const itemMatchesScope = (promo: IPromotionDocument, item: DiscountableItem): bo
   if (promo.scope === 'all') return true;
   if (promo.scope === 'course') return (item.type === 'course' && item.refId === promo.targetId) || item.courseId === promo.targetId;
   if (promo.scope === 'package') return item.packageId === promo.targetId;
+  if (promo.scope === 'offer') return item.offerId === promo.targetId;
+  if (promo.scope === 'event') return item.type === 'event' && (!promo.targetId || item.refId === promo.targetId || item.eventId === promo.targetId);
+  if (promo.scope === 'book') return item.type === 'product' && (!promo.targetId || item.refId === promo.targetId);
   return false;
 };
 

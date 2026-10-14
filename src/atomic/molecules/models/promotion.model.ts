@@ -1,7 +1,7 @@
 import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
 
 export type PromotionType = 'percentage' | 'fixed';
-export type PromotionScope = 'all' | 'course' | 'package';
+export type PromotionScope = 'all' | 'course' | 'package' | 'offer' | 'event' | 'book';
 
 export interface IPromotionDocument extends SqlDocumentMethods<IPromotionDocument> {
   code: string;
