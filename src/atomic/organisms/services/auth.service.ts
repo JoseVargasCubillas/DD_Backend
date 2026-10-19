@@ -23,6 +23,7 @@ interface ChangePasswordInput { userId: string; currentPassword: string; newPass
 interface AdminCreateUserInput {
   name: string;
   email: string;
+  phone?: string;
   role?: 'user' | 'admin';
   tagIds?: string[];
   courseIds?: string[];
@@ -95,6 +96,7 @@ export const refreshTokens = async (token: string): Promise<{ accessToken: strin
 export const adminCreateUser = async ({
   name,
   email: rawEmail,
+  phone,
   role = 'user',
   tagIds = [],
   courseIds = [],
@@ -119,6 +121,7 @@ export const adminCreateUser = async ({
   const user = await User.create({
     name,
     email,
+    phone: String(phone || '').trim(),
     password: hashed,
     role,
     tagIds: Array.from(new Set(tagIds)),

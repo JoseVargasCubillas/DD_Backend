@@ -3,6 +3,8 @@ import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
 export interface IPackageDocument extends SqlDocumentMethods<IPackageDocument> {
   name: string;
   slug: string;
+  // entrepreneur | business | master; vacío en paquetes legacy.
+  tier?: string;
   description: string;
   price: number;
   currency: string;

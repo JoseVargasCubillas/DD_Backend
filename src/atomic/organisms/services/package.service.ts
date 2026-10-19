@@ -78,7 +78,9 @@ export const syncCourseIntoActivePackages = async (courseId: string): Promise<nu
 };
 
 // ── Asignación a usuario ─────────────────────────────────────
-export const assignPackageToUser = async (userId: string, packageId: string) => {
+// durationDays (opcional): días de acceso elegidos por el admin. Si no viene o
+// no es un número positivo, se usa la vigencia del paquete.
+export const assignPackageToUser = async (userId: string, packageId: string, durationDays?: number | null) => {
   const [user, pkg] = await Promise.all([User.findById(userId), Package.findById(packageId)]);
   if (!user) throw err('Usuario no encontrado', 404);
   if (!pkg) throw err('Paquete no encontrado', 404);
@@ -91,7 +93,11 @@ export const assignPackageToUser = async (userId: string, packageId: string) => 
   await user.save();
 
   const now = new Date();
-  const periodEnd = getPackagePeriodEnd(pkg, now);
+  const customDays = Number(durationDays);
+  const periodEnd =
+    Number.isFinite(customDays) && customDays > 0
+      ? new Date(now.getTime() + Math.floor(customDays) * 86400000)
+      : getPackagePeriodEnd(pkg, now);
 
   // Si ya existe una suscripción activa para este usuario+paquete, la
   // renovamos en lugar de crear una fila nueva (evita duplicados en

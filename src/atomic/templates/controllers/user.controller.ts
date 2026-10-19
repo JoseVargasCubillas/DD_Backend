@@ -59,12 +59,13 @@ export const toggleActive: RequestHandler = async (req, res) => {
 // ── Admin: vista detallada ───────────────────────────────────
 export const getUserById: RequestHandler = async (req, res) => {
   try {
-    const [user, tags, orders] = await Promise.all([
+    const [user, tags, orders, academySubscriptions] = await Promise.all([
       userService.getByIdSanitized(req.params.id),
       userService.getUserTags(req.params.id),
       userService.getUserOrders(req.params.id),
+      userService.getUserAcademySubscriptions(req.params.id),
     ]);
-    success(res, { ...user, tags, orders });
+    success(res, { ...user, tags, orders, academySubscriptions });
   } catch (err: any) {
     err.statusCode === 404 ? notFound(res, err.message) : serverError(res, err);
   }

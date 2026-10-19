@@ -23,4 +23,4 @@ export const remove: RequestHandler = async (req, res) => {
 };
 
 export const assignToUser: RequestHandler = (req, res) =>
-  handle(res, () => packageService.assignPackageToUser(req.params.userId, req.body.packageId));
+  handle(res, () => packageService.assignPackageToUser(req.params.userId, req.body.packageId, req.body.durationDays));

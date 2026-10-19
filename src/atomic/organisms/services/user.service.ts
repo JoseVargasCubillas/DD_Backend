@@ -3,6 +3,7 @@ import { Tag, ITagDocument } from '../../molecules/models/tag.model.js';
 import { Order, IOrderDocument } from '../../molecules/models/order.model.js';
 import { Course } from '../../molecules/models/course.model.js';
 import { Subscription } from '../../molecules/models/subscription.model.js';
+import { Package } from '../../molecules/models/package.model.js';
 import { hashPassword } from '../../atoms/helpers/hash.helper.js';
 import { env } from '../../../config/env.js';
 import { getEffectiveUserCourses, getUserOffers } from './offer.service.js';
@@ -517,6 +518,34 @@ export const updateNotes = async (id: string, notes: string) => {
 };
 
 // ── Órdenes del usuario ──────────────────────────────────────
+// Suscripciones de Academia del contacto (incluye las asignadas a mano, que no
+// generan Order). Se usan en el expediente para mostrar plan, vigencia y origen.
+export const getUserAcademySubscriptions = async (userId: string) => {
+  const subs = await Subscription.find({ user: userId });
+  const rows = await Promise.all(
+    subs
+      .filter((sub) => sub.status !== 'incomplete')
+      .map(async (sub) => {
+        const pkg = sub.packageId ? await Package.findById(String(sub.packageId)) : null;
+        return {
+          _id: sub._id,
+          packageId: sub.packageId || null,
+          packageName: pkg?.name ?? null,
+          packageTier: pkg?.tier ?? sub.plan ?? null,
+          price: pkg?.price ?? null,
+          currency: pkg?.currency ?? 'MXN',
+          status: sub.status,
+          startDate: sub.currentPeriodStart,
+          currentPeriodEnd: sub.currentPeriodEnd,
+          cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+          source: sub.orderId ? 'order' : sub.stripeSubscriptionId ? 'stripe' : 'manual_admin',
+          createdAt: sub.createdAt,
+        };
+      }),
+  );
+  return rows.sort((a, b) => new Date(String(b.createdAt)).getTime() - new Date(String(a.createdAt)).getTime());
+};
+
 export const getUserOrders = async (userId: string): Promise<IOrderDocument[]> => {
   const orders = await Order.find({ user: userId });
   return orders.sort((a, b) => new Date(String(b.createdAt)).getTime() - new Date(String(a.createdAt)).getTime());
