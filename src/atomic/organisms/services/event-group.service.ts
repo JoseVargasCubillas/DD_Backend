@@ -43,10 +43,19 @@ export const detectGroupProduct = (...parts: Array<string | undefined | null>): 
 
 export const groupLabel = (key: GroupKey): string => GROUPS[key].label;
 
-// Enlace real del grupo (nunca se manda por correo). Null si aún no se configura.
-export const resolveGroupUrl = (key: GroupKey): string | null => GROUPS[key].url().trim() || null;
+const GROUP_URL_RE = /^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]+\/?(\?.*)?$/;
 
-export const isGroupConfigured = (key: GroupKey): boolean => Boolean(resolveGroupUrl(key));
+// Enlace real del grupo (nunca se manda por correo). Cada edición tiene el suyo
+// en el campo "Grupo de WhatsApp" del evento (admin → Eventos); sin él, el del
+// .env como respaldo. Null si tampoco existe.
+export const resolveGroupUrl = (key: GroupKey, eventGroupUrl?: string | null): string | null => {
+  const own = String(eventGroupUrl ?? '').trim();
+  if (GROUP_URL_RE.test(own)) return own;
+  return GROUPS[key].url().trim() || null;
+};
+
+export const isGroupConfigured = (key: GroupKey, eventGroupUrl?: string | null): boolean =>
+  Boolean(resolveGroupUrl(key, eventGroupUrl));
 
 export const buildGroupJoinUrl = (token: string): string =>
   `${env.serverUrl.replace(/\/$/, '')}/api/v1/event-groups/${token}`;
@@ -65,14 +74,19 @@ export const issueGroupInvite = async (input: {
   key: GroupKey;
   email: string;
   name: string;
+  // Enlace del grupo de la edición comprada (campo del evento); sin él, el del .env.
+  groupUrl?: string | null;
 }): Promise<GroupInviteCard | null> => {
-  if (!isGroupConfigured(input.key)) return null;
-
   let invite = await EventGroupInvite.findOne({ ref: input.ref });
   if (!invite) {
+    // El enlace de la edición se fija al emitir: si el admin cambia o agrega
+    // grupos después, quien ya compró conserva el suyo.
+    const groupUrl = resolveGroupUrl(input.key, input.groupUrl);
+    if (!groupUrl) return null;
     invite = await EventGroupInvite.create({
       ref: input.ref,
       groupKey: input.key,
+      groupUrl,
       token: randomUUID(),
       email: input.email.trim().toLowerCase(),
       name: input.name,
@@ -104,7 +118,7 @@ export const redeemGroupInvite = async (
   if (!invite) return { status: 'invalid' };
   if (invite.usedAt) return { status: 'used' };
 
-  const url = resolveGroupUrl(invite.groupKey as GroupKey);
+  const url = invite.groupUrl?.trim() || resolveGroupUrl(invite.groupKey as GroupKey);
   if (!url) return { status: 'invalid' };
 
   invite.usedAt = new Date().toISOString();

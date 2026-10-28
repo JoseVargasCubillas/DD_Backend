@@ -191,6 +191,8 @@ interface ResolvedEvent {
   location: string;
   modality: string; // 'in-person' | 'online' | 'hybrid' | 'unknown'
   source: 'db' | 'catalog';
+  // Grupo de WhatsApp de la edición (solo eventos de la DB).
+  groupUrl?: string;
 }
 
 // Coincide si el título/slug contiene el nombre del producto o un alias
@@ -213,7 +215,7 @@ export const findEvent = async (name: string, date: string): Promise<ResolvedEve
   if (db) {
     return {
       refId: String(db._id), slug: db.slug, title: db.title, startDate: db.startDate, endDate: db.endDate,
-      location: db.location, modality: db.modality, source: 'db',
+      location: db.location, modality: db.modality, source: 'db', groupUrl: db.whatsappGroupUrl,
     };
   }
 
@@ -495,10 +497,11 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     // salen solos cuando se configure.
     const groupKey = detectGroupProduct(parsed.name, parsed.tier === 'Online' ? 'online' : '');
     if (groupKey) {
-      if (!isGroupConfigured(groupKey)) {
+      const groupEvent = await findEvent(parsed.name, parsed.date);
+      if (!isGroupConfigured(groupKey, groupEvent?.groupUrl)) {
         summary.pendingEvent += 1;
         if (!c.pending) {
-          log(`negocio ${deal.id} · "${c.props.name}" → PENDIENTE: falta el enlace del grupo de WhatsApp de ${groupLabel(groupKey)} (WHATSAPP_GROUP_*_URL)`);
+          log(`negocio ${deal.id} · "${c.props.name}" → PENDIENTE: falta el enlace del grupo de WhatsApp de ${groupLabel(groupKey)} del ${parsed.date} (admin → Eventos → campo "Grupo de WhatsApp"; el evento debe existir en la DB)`);
           if (!dryRun) {
             await HubspotSync.create({
               kind: 'item', dealId: deal.id, lineItemId: c.id, status: 'pending_event',
@@ -514,10 +517,9 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
         log(`[dry] negocio ${deal.id} · ${email} · ${groupLabel(groupKey)} → invitación al grupo de WhatsApp${advisor ? ` · copia → ${advisor.email}` : ''}`);
         continue;
       }
-      const card = await issueGroupInvite({ ref: `hubspot:${deal.id}:${c.id}`, key: groupKey, email, name: attendee.name });
+      const card = await issueGroupInvite({ ref: `hubspot:${deal.id}:${c.id}`, key: groupKey, email, name: attendee.name, groupUrl: groupEvent?.groupUrl });
       if (!card) continue;
       // Datos para el resumen de compra del correo (igual que el recibo de la web).
-      const groupEvent = await findEvent(parsed.name, parsed.date);
       const eventDateLabel = groupEvent
         ? formatEventDateLabel(groupEvent.startDate, groupEvent.endDate)
         : formatEventDateLabel(new Date(`${parsed.date}T12:00:00-06:00`));

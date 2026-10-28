@@ -203,6 +203,52 @@ export const getShippingRate = async (
   return match;
 };
 
+export interface ShippingTrackingResult {
+  status: string;
+  deliveryState: 'unknown' | 'in_transit' | 'delivered' | 'incident';
+  events: Array<{ date: string; description: string; location: string }>;
+}
+
+const classifyDeliveryState = (status: string): ShippingTrackingResult['deliveryState'] => {
+  const text = status.toLowerCase();
+  if (!text) return 'unknown';
+  if (/entreg|deliver/.test(text) && !/no entreg|not deliver|intento/.test(text)) return 'delivered';
+  if (/incidenc|devuel|return|cancel|exception|excepci|siniestro|extrav/.test(text)) return 'incident';
+  if (/tr[aá]nsito|transit|ruta|recolec|pick|ship|enviad|camino/.test(text)) return 'in_transit';
+  return 'unknown';
+};
+
+// Consulta el estado de una guia ya generada. La forma exacta de la respuesta
+// varia segun la paqueteria, asi que se leen varios nombres de campo posibles
+// y se devuelve un resumen normalizado; si Envia no responde o no reconoce la
+// guia (p.ej. en sandbox) regresa null y el llamador conserva el ultimo estado.
+export const trackShipment = async (trackingNumber: string): Promise<ShippingTrackingResult | null> => {
+  if (!isEnviaConfigured() || !trackingNumber) return null;
+  const payload = await enviaRequest('/ship/generaltrack/', { trackingNumbers: [trackingNumber] });
+  const row = Array.isArray(payload?.data) ? payload.data[0] : null;
+  if (!row) return null;
+
+  const status = String(row.status ?? row.statusDescription ?? row.currentStatus ?? row.lastStatus ?? '').trim();
+  const rawEvents: any[] = Array.isArray(row.eventHistory)
+    ? row.eventHistory
+    : Array.isArray(row.events)
+      ? row.events
+      : Array.isArray(row.history)
+        ? row.history
+        : [];
+
+  const events = rawEvents
+    .map((ev) => ({
+      date: String(ev?.date ?? ev?.eventDate ?? ev?.timestamp ?? ev?.datetime ?? ''),
+      description: String(ev?.description ?? ev?.status ?? ev?.event ?? ev?.message ?? ''),
+      location: String(ev?.location ?? ev?.city ?? ev?.place ?? ''),
+    }))
+    .filter((ev) => ev.description || ev.date);
+
+  if (!status && !events.length) return null;
+  return { status: status || events[0]?.description || '', deliveryState: classifyDeliveryState(status || events[0]?.description || ''), events };
+};
+
 // Se llama automaticamente cuando el pago de una orden con envio se confirma
 // (ver confirmPayment en payment.service.ts) — genera la guia real en Envia
 // y regresa numero de rastreo + PDF para adjuntar a la orden y al recibo.

@@ -4,7 +4,7 @@ import { IUserDocument } from '../../molecules/models/user.model.js';
 import { IOrderDocument } from '../../molecules/models/order.model.js';
 import { formatTicketOrderRef } from '../../atoms/helpers/event-ticket.helper.js';
 
-const ADMIN_NOTICE_EMAIL = 'Ti@diegodiaz.mx';
+export const ADMIN_NOTICE_EMAIL = 'Ti@diegodiaz.mx';
 
 const transporter = nodemailer.createTransport({
   host: env.mail.host,
@@ -743,6 +743,99 @@ export const sendOrderAdminNotice = (input: {
         body: `diegodiaz.mx · enviado a ${ADMIN_NOTICE_EMAIL.toLowerCase()}. Este correo es interno y no contiene datos sensibles del pago.`,
       },
       preheader: `Nueva compra confirmada: ${input.itemsTitle}.`,
+    }),
+  );
+
+// Aviso interno: un asesor capturó un envío de libros que espera aprobación.
+export const sendShipmentAdminNotice = (input: {
+  shipmentId: string;
+  advisorName: string;
+  customerName: string;
+  customerPhone: string;
+  destination: string;
+  itemsTitle: string;
+  quotedPrice: number | null;
+  warnings: string[];
+}): Promise<unknown> =>
+  send(
+    ADMIN_NOTICE_EMAIL,
+    `Envío por aprobar · ${input.customerName} (${input.advisorName})`,
+    emailShell({
+      eyebrow: 'Envío de libros',
+      badge: 'Por aprobar',
+      title: `Nueva solicitud<br/>${accent('de envío.')}`,
+      lead: `${input.advisorName} capturó un envío de libros. Revisa los datos y aprueba para generar la guía en Envia.`,
+      headerCta: { label: 'Ir a envíos', url: `${env.clientUrl}/admin/envios` },
+      content: `
+      ${confirmationPanel({
+        label: 'Solicitud de envío',
+        tag: 'Pendiente',
+        value: accent(input.customerName),
+        description: 'Datos capturados por el asesor, pendientes de tu aprobación.',
+        rows: [
+          ['Asesor', input.advisorName],
+          ['Libros', input.itemsTitle],
+          ['Destinatario', input.customerName],
+          ['Teléfono', input.customerPhone],
+          ['Destino', input.destination],
+          ['Costo estimado', input.quotedPrice != null ? formatMXN(input.quotedPrice) : '—'],
+          ...(input.warnings.length ? [['Avisos', input.warnings.join(' · ')] as [string, string]] : []),
+        ],
+      })}
+      <div style="margin-top:22px;">
+        ${linkButton({ label: 'Revisar y aprobar', detail: `Envío #${input.shipmentId.slice(-6).toUpperCase()}`, url: `${env.clientUrl}/admin/envios`, dark: true })}
+      </div>
+    `,
+      footerMeta: {
+        left: `Envío #${input.shipmentId.slice(-6).toUpperCase()}`,
+        right: formatDateTimeEs(new Date()),
+      },
+      footerNote: {
+        tag: '— Notificación administrativa',
+        body: `diegodiaz.mx · enviado a ${ADMIN_NOTICE_EMAIL.toLowerCase()}. La guía no se genera hasta que apruebes la solicitud.`,
+      },
+      preheader: `${input.advisorName} capturó un envío para ${input.customerName}.`,
+    }),
+  );
+
+// Aviso de estado de un envío de libros (guía generada / rechazado) para el
+// cliente final o el asesor. `title` + `titleAccent` arman el encabezado con la
+// última palabra en cursiva, igual que el resto de correos.
+export const sendShipmentNoticeEmail = (input: {
+  to: string;
+  subject: string;
+  eyebrow: string;
+  badge: string;
+  title: string;
+  titleAccent: string;
+  lead: string;
+  panelLabel: string;
+  panelValue: string;
+  rows: Array<[string, string]>;
+  cta?: { label: string; detail?: string; url: string };
+  footerNote: string;
+}): Promise<unknown> =>
+  send(
+    input.to,
+    input.subject,
+    emailShell({
+      eyebrow: input.eyebrow,
+      badge: input.badge,
+      title: `${escapeHtml(input.title)}<br/>${accent(input.titleAccent)}`,
+      lead: input.lead,
+      content: `
+      ${confirmationPanel({
+        label: input.panelLabel,
+        tag: input.badge,
+        value: accent(input.panelValue),
+        description: input.lead,
+        rows: input.rows,
+      })}
+      ${input.cta ? `<div style="margin-top:22px;">${linkButton({ label: input.cta.label, detail: input.cta.detail, url: input.cta.url, dark: true })}</div>` : ''}
+    `,
+      footerMeta: { left: input.eyebrow, right: formatDateTimeEs(new Date()) },
+      footerNote: { tag: '— Aviso de envío', body: input.footerNote },
+      preheader: input.lead,
     }),
   );
 

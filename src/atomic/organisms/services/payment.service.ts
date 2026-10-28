@@ -14,7 +14,10 @@ import {
   sendOrderAdminNotice,
 } from './email.service.js';
 import { hashPassword, generateTempPassword } from '../../atoms/helpers/hash.helper.js';
-import { getShippingRate, getShippingRates, generateShippingLabel, ShippingPackage } from './shipping.service.js';
+import { getShippingRate, getShippingRates, generateShippingLabel, isEnviaConfigured } from './shipping.service.js';
+import { buildShippingPackages } from '../../atoms/helpers/shipping-packages.helper.js';
+import { validateDeliveryAddress } from './address-validation.service.js';
+import { recordWebShipmentLabel, recordWebShipmentFailure } from './shipment.service.js';
 import { findOfferByIdentity, isOfferActive } from './offer.service.js';
 import { getCheckoutUser, CheckoutCustomer, markIncompletePayment, clearIncompletePayment } from './user.service.js';
 import { issueWhatsappInviteToken, buildWhatsappInviteUrl } from './whatsapp-invite.service.js';
@@ -26,7 +29,7 @@ import { EventTicket } from '../../molecules/models/event-ticket.model.js';
 import { buildTicketUrl } from '../../atoms/helpers/ticket-token.helper.js';
 import Stripe from 'stripe';
 
-interface OrderItemInput {
+export interface OrderItemInput {
   type: string;
   refId: string;
   title: string;
@@ -203,51 +206,6 @@ const resolveOrderOwner = async (
   throw makeError('Inicia sesión para continuar', 401);
 };
 
-// Los libros del pedido se envian en el mismo sobre acolchado de 20x15cm que
-// se usa siempre para este tipo de envio (ver paquete guardado "LIBROS" en
-// Envia). Un sobre acolchado ya no cabe fisicamente pasado cierto peso, asi
-// que pedidos grandes cambian a caja: el alto se apila por libro y largo/ancho
-// toman el mayor de los items, igual que antes de introducir el sobre fijo.
-const ENVELOPE_LENGTH_CM = 20;
-const ENVELOPE_WIDTH_CM = 15;
-const ENVELOPE_HEIGHT_CM = 2;
-const ENVELOPE_MAX_WEIGHT_KG = 2;
-
-const buildShippingPackages = (items: OrderItemInput[]): ShippingPackage[] => {
-  const products = items.filter((i) => i.type === 'product');
-  if (!products.length) return [];
-
-  const totals = products.reduce(
-    (acc, item) => {
-      const quantity = item.quantity ?? 1;
-      acc.weightKg += (item.weightKg ?? 0.5) * quantity;
-      acc.heightCm += (item.heightCm ?? 3) * quantity;
-      acc.lengthCm = Math.max(acc.lengthCm, item.lengthCm ?? 23);
-      acc.widthCm = Math.max(acc.widthCm, item.widthCm ?? 16);
-      acc.declaredValue += item.price * quantity;
-      return acc;
-    },
-    { weightKg: 0, heightCm: 0, lengthCm: 0, widthCm: 0, declaredValue: 0 },
-  );
-
-  const weightKg = Math.round(totals.weightKg * 100) / 100;
-  const content = products.map((p) => p.title).join(', ').slice(0, 100);
-  const declaredValue = Math.round(totals.declaredValue * 100) / 100;
-  const fitsEnvelope = weightKg <= ENVELOPE_MAX_WEIGHT_KG;
-
-  return [
-    {
-      type: fitsEnvelope ? 'envelope' : 'box',
-      content,
-      weightKg,
-      lengthCm: fitsEnvelope ? ENVELOPE_LENGTH_CM : totals.lengthCm,
-      widthCm: fitsEnvelope ? ENVELOPE_WIDTH_CM : totals.widthCm,
-      heightCm: fitsEnvelope ? ENVELOPE_HEIGHT_CM : Math.round(totals.heightCm * 100) / 100,
-      declaredValue,
-    },
-  ];
-};
-
 // Antes solo mandaba recibo a compras de invitado (order.contact). Las
 // compras de libros con sesion iniciada (order.user, sin contact) se
 // quedaban sin ningun correo de confirmacion — se resuelve el destinatario
@@ -297,11 +255,14 @@ const sendReceiptIfEventOrder = async (order: IOrderDocument): Promise<void> => 
         if (item.type !== 'event') continue;
         const key = detectGroupProduct(item.refId, item.title, item.eventFormat);
         if (!key) continue;
+        // Grupo de la edición comprada: campo "Grupo de WhatsApp" del evento.
+        const boughtEvent = item.eventId ? await Event.findById(item.eventId).then((e) => e, () => null) : null;
         const card = await issueGroupInvite({
           ref: `web:${String(order._id)}:${index}`,
           key,
           email: recipient.email,
           name: recipient.name,
+          groupUrl: boughtEvent?.whatsappGroupUrl,
         });
         if (card) groups.push(card);
       }
@@ -338,21 +299,45 @@ const sendReceiptIfEventOrder = async (order: IOrderDocument): Promise<void> => 
 
 // Best effort: si Envia falla, el pago ya esta confirmado y la orden sigue
 // completa — no se bloquea la confirmacion por un problema de paqueteria.
-// El admin puede reintentar manualmente si esto no genera la guia.
+// El resultado (guia o falla) queda registrado como envio "web" para verlo en
+// Admin > Envios; si fallo, el admin recibe aviso y puede reintentarla desde ahi.
 const generateOrderShippingLabelIfNeeded = async (order: IOrderDocument): Promise<void> => {
-  if (!order.shipping || !order.shippingCarrier || !order.shippingService) return;
+  if (!order.shipping) return;
+  const packages = buildShippingPackages(order.items);
+  if (!packages.length) return;
   if (order.shippingTrackingNumber) return;
 
+  const recordFailure = async (message: string) => {
+    console.warn('[generateOrderShippingLabelIfNeeded] failed:', message);
+    try {
+      await recordWebShipmentFailure(order, message);
+    } catch (err) {
+      console.error('[generateOrderShippingLabelIfNeeded] no se pudo registrar la falla:', (err as Error).message);
+    }
+  };
+
+  if (!isEnviaConfigured()) {
+    await recordFailure('Envia no está configurado en el servidor');
+    return;
+  }
+  if (!order.shippingCarrier || !order.shippingService) {
+    await recordFailure('El cliente pagó sin una paquetería disponible para su domicilio');
+    return;
+  }
+
   try {
-    const packages = buildShippingPackages(order.items);
-    if (!packages.length) return;
     const label = await generateShippingLabel(order.shipping, packages, order.shippingCarrier, order.shippingService);
     order.shippingTrackingNumber = label.trackingNumber;
     order.shippingLabelUrl = label.labelUrl;
     order.shippingTrackUrl = label.trackUrl;
     await order.save();
+    try {
+      await recordWebShipmentLabel(order, label);
+    } catch (err) {
+      console.error('[generateOrderShippingLabelIfNeeded] no se pudo registrar el envío:', (err as Error).message);
+    }
   } catch (err) {
-    console.warn('[generateOrderShippingLabelIfNeeded] failed:', (err as Error).message);
+    await recordFailure((err as Error).message || 'No se pudo generar la guía');
   }
 };
 
@@ -397,6 +382,15 @@ export const createPaymentIntent = async (
   const requiresAccount = normalizedItems.some((i) => GUEST_ACCOUNT_TYPES.has(i.type));
   const { user, contact } = await resolveOrderOwner(userId, customer, requiresAccount);
   const requiresShipping = Boolean(shipping) || normalizedItems.some((i) => i.type === 'product');
+
+  // El domicilio se valida también aquí (no solo en el navegador) para que no
+  // se pueda pagar con un CP inexistente, un estado que no le corresponde o un
+  // teléfono inválido. Los avisos (colonia, calle sin número) no bloquean.
+  if (requiresShipping && shipping) {
+    const check = await validateDeliveryAddress(shipping);
+    if (check.errors.length) throw makeError(check.errors.join(' '), 400);
+    shipping = { ...shipping, phone: check.phone };
+  }
 
   // El envio ya esta incluido en el precio del libro — el costo real se paga
   // con el saldo de la cuenta de Envia, nunca se le cobra aparte al cliente.

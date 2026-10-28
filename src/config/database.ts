@@ -26,6 +26,8 @@ const entityTables = [
   'hubspot_sync',
   'event_catalog',
   'event_group_invites',
+  'shipping_advisors',
+  'shipments',
 ] as const;
 
 const quoteId = (identifier: string): string => `\`${identifier.replace(/`/g, '``')}\``;

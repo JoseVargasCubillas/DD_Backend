@@ -104,6 +104,16 @@ export const env = {
       postalCode: process.env.ENVIA_ORIGIN_POSTAL_CODE ?? '',
     },
   },
+  // Envíos de libros capturados por asesores (shipment.service.ts). El aviso
+  // de cada solicitud nueva llega por correo (ADMIN_NOTICE_EMAIL) y, si se
+  // define este número, también por WhatsApp.
+  shipping: {
+    notifyWhatsapp: process.env.SHIPPING_NOTIFY_WHATSAPP ?? '',
+    // Con Envia en sandbox las guías y números de rastreo son de prueba, así
+    // que NO se avisa al cliente final salvo que se active esto a propósito
+    // (p.ej. capturando tu propio teléfono/correo como destinatario).
+    notifyCustomersInTest: process.env.SHIPPING_TEST_NOTIFY === 'true',
+  },
   // Polling de negocios ganados en HubSpot -> boletos QR (hubspot.service.ts).
   hubspot: {
     token: process.env.HUBSPOT_TOKEN ?? '',
@@ -128,5 +138,31 @@ export const env = {
     sefOnlineGroupUrl: process.env.WHATSAPP_GROUP_SEF_ONLINE_URL ?? '',
     whapiToken: process.env.WHAPI_TOKEN ?? '',
     whapiUrl: process.env.WHAPI_URL ?? 'https://gate.whapi.cloud',
+    // WhatsApp Cloud API oficial de Meta. Los avisos de envíos de libros usan
+    // plantillas aprobadas (fuera de una conversación activa Meta no permite
+    // texto libre); los nombres se pueden cambiar sin tocar código.
+    cloud: {
+      token: process.env.WHATSAPP_CLOUD_TOKEN ?? '',
+      phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID ?? '',
+      apiVersion: process.env.WHATSAPP_API_VERSION ?? 'v23.0',
+      language: process.env.WHATSAPP_TEMPLATE_LANG ?? 'es_MX',
+      // 'named': variables {{asesor}}, {{cliente}}… (se envían con parameter_name).
+      // 'positional': variables {{1}}, {{2}}… en orden. Debe coincidir con el
+      // "Tipo de variable" con el que se crearon las plantillas en Meta.
+      paramFormat: (process.env.WHATSAPP_TEMPLATE_PARAM_FORMAT === 'positional' ? 'positional' : 'named') as
+        | 'named'
+        | 'positional',
+      templates: {
+        shipmentAdmin: process.env.WHATSAPP_TPL_SHIPMENT_ADMIN ?? 'envio_nuevo_admin',
+        shipmentCustomer: process.env.WHATSAPP_TPL_SHIPMENT_CUSTOMER ?? 'envio_guia_cliente',
+        shipmentAdvisor: process.env.WHATSAPP_TPL_SHIPMENT_ADVISOR ?? 'envio_guia_asesor',
+        shipmentRejected: process.env.WHATSAPP_TPL_SHIPMENT_REJECTED ?? 'envio_rechazado_asesor',
+        // Avisos de estado y fallas: sin nombre por defecto; si no se define la
+        // variable el WhatsApp se omite (queda en el registro) y solo sale el correo.
+        shipmentDelivered: process.env.WHATSAPP_TPL_SHIPMENT_DELIVERED ?? '',
+        shipmentIncident: process.env.WHATSAPP_TPL_SHIPMENT_INCIDENT ?? '',
+        shipmentWebFailed: process.env.WHATSAPP_TPL_SHIPMENT_WEB_FAILED ?? '',
+      },
+    },
   },
 } as const;

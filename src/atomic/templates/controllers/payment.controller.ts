@@ -2,6 +2,8 @@ import { RequestHandler } from 'express';
 import * as paymentService from '../../organisms/services/payment.service.js';
 import { stripe } from '../../../config/stripe.js';
 import { env } from '../../../config/env.js';
+import { validateDeliveryAddress } from '../../organisms/services/address-validation.service.js';
+import { lookupPostalCode } from '../../organisms/services/postal-code.service.js';
 import { success, badRequest, notFound, serverError } from '../../atoms/helpers/response.helper.js';
 
 export const createIntent: RequestHandler = async (req, res) => {
@@ -38,6 +40,36 @@ export const quoteShipping: RequestHandler = async (req, res) => {
     success(res, rates);
   } catch (err: any) {
     err.statusCode === 400 ? badRequest(res, err.message) : serverError(res, err);
+  }
+};
+
+// Verificación del domicilio antes de pasar al pago: errores bloquean, avisos
+// piden confirmación. Mismas reglas que valida createPaymentIntent.
+export const validateAddress: RequestHandler = async (req, res) => {
+  try {
+    const s = (req.body?.shipping ?? {}) as Record<string, unknown>;
+    const { errors, warnings } = await validateDeliveryAddress({
+      phone: s.phone,
+      street: s.street,
+      colony: s.colony,
+      postalCode: s.postalCode,
+      city: s.city,
+      state: s.state,
+    });
+    success(res, { errors, warnings });
+  } catch (err: any) {
+    serverError(res, err);
+  }
+};
+
+// Autollenado del checkout: estado, ciudad y colonias de un código postal.
+export const postalCodeLookup: RequestHandler = async (req, res) => {
+  try {
+    const lookup = await lookupPostalCode(String(req.params.postalCode || ''));
+    if (lookup.status === 'ok') success(res, { found: true, ...lookup.info });
+    else success(res, { found: false, unavailable: lookup.status === 'unavailable' });
+  } catch (err: any) {
+    serverError(res, err);
   }
 };
 

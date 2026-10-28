@@ -22,6 +22,7 @@ import whatsappRoutes from './whatsapp.routes.js';
 import ticketRoutes from './ticket.routes.js';
 import integrationsRoutes from './integrations.routes.js';
 import eventGroupRoutes from './event-group.routes.js';
+import shipmentRoutes from './shipment.routes.js';
 
 export const apiRoutes = Router();
 
@@ -49,3 +50,4 @@ apiRoutes.use('/whatsapp', whatsappRoutes);
 apiRoutes.use('/tickets', ticketRoutes);
 apiRoutes.use('/integrations', integrationsRoutes);
 apiRoutes.use('/event-groups', eventGroupRoutes);
+apiRoutes.use('/shipments', shipmentRoutes);

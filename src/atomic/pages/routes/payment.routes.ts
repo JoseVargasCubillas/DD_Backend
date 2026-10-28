@@ -11,6 +11,8 @@ router.post('/intent', optionalAuthenticate, paymentController.createIntent);
 router.post('/quote', globalLimiter, paymentController.quoteOrder);
 router.post('/confirm', globalLimiter, paymentController.confirmIntent);
 router.post('/shipping-quote', globalLimiter, paymentController.quoteShipping);
+router.post('/validate-address', globalLimiter, paymentController.validateAddress);
+router.get('/postal-code/:postalCode', globalLimiter, paymentController.postalCodeLookup);
 router.use(authenticate);
 router.get('/admin/orders', requireAdmin, paymentController.getOrders);
 router.delete('/admin/orders/:id', requireAdmin, paymentController.deleteOrder);

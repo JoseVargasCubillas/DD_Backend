@@ -9,6 +9,9 @@ export interface IEventGroupInviteDocument extends SqlDocumentMethods<IEventGrou
   ref: string;
   groupKey: string;
   token: string;
+  // Enlace real del grupo fijado al emitir la invitación (la edición comprada).
+  // Las anteriores a este campo caen al enlace del .env.
+  groupUrl?: string;
   email: string;
   name: string;
   usedAt: string | null;
