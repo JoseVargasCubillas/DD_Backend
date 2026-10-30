@@ -42,6 +42,18 @@ app.use(express.urlencoded({
   },
 }));
 
+// Catálogos públicos: permitir que navegador/CDN cacheen respuestas anónimas
+// por 1 min (y servir stale hasta 5 min mientras revalidan). Sólo GET sin
+// Authorization, para no cachear vistas personalizadas.
+const PUBLIC_CACHE_PREFIXES = ['/courses', '/events', '/event-groups', '/blog', '/books', '/packages', '/offers', '/promotions'];
+app.use('/api/v1', (req, res, next) => {
+  if (req.method === 'GET' && !req.headers.authorization && PUBLIC_CACHE_PREFIXES.some((p) => req.path.startsWith(p))) {
+    res.set('Cache-Control', 'public, max-age=60, stale-while-revalidate=300');
+    res.set('Vary', 'Origin, Authorization, Accept-Encoding');
+  }
+  next();
+});
+
 app.use('/api/v1', globalLimiter, apiRoutes);
 
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date() }));
