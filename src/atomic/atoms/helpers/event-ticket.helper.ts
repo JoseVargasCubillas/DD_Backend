@@ -34,7 +34,9 @@ export const formatEventDateLabel = (value: Date | string, endValue?: Date | str
     new Intl.DateTimeFormat('es-MX', { ...options, timeZone: 'America/Mexico_City' }).format(d);
 
   const end = endValue ? new Date(endValue) : null;
-  if (end && !Number.isNaN(end.getTime())) {
+  // Una fecha de fin anterior al inicio es un dato mal capturado (p. ej. un
+  // evento duplicado que conservó el fin del original): se ignora.
+  if (end && !Number.isNaN(end.getTime()) && end.getTime() > date.getTime()) {
     const dayKey = (d: Date): string => part(d, { day: 'numeric', month: 'numeric', year: 'numeric' });
     if (dayKey(end) !== dayKey(date)) {
       const sameMonth =
