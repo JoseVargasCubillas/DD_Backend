@@ -39,6 +39,8 @@ export interface IEventTicketDocument extends SqlDocumentMethods<IEventTicketDoc
   sheetTab: string;
   // 'General' | 'VIP' cuando el boleto viene de un negocio de HubSpot.
   ticketType?: string;
+  // Asesor (propietario del negocio en HubSpot) cuando la venta la cerró un asesor.
+  advisorName?: string;
   createdAt: Date | string;
   updatedAt: Date | string;
 }

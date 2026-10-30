@@ -36,6 +36,7 @@ import {
   findActiveTicketForEvent,
   renderTicketQrBuffer,
 } from './ticket.service.js';
+import { isAttendanceSheetEnabled, syncTicketRow } from './attendance-sheet.service.js';
 import { sendEventTicketsEmail, sendEventGroupEmail } from './email.service.js';
 import { detectGroupProduct, groupLabel, isGroupConfigured, issueGroupInvite, cardFromToken, GroupKey } from './event-group.service.js';
 
@@ -434,6 +435,98 @@ const ADVISOR_BACKFILL_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 const ADVISOR_RECHECK_MS = 10 * 60 * 1000;
 const advisorCheckedAt = new Map<string, number>();
 
+// Escribe el asesor en los boletos del registro (lista de asistentes y Excel).
+// Devuelve cuántos boletos se actualizaron.
+const applyAdvisorToTickets = async (record: IHubspotSyncDocument): Promise<number> => {
+  const name = record.advisorName || record.advisorEmail || '';
+  if (!name) return 0;
+  let updated = 0;
+  for (const folio of record.folios ?? []) {
+    const t = await EventTicket.findOne({ folio });
+    if (!t || t.advisorName === name) continue;
+    t.advisorName = name;
+    await t.save();
+    updated += 1;
+    try {
+      await syncTicketRow(t);
+    } catch (err) {
+      log(`no se pudo actualizar el Excel del boleto ${folio}: ${(err as Error).message}`);
+    }
+  }
+  return updated;
+};
+
+export interface TicketOriginBackfill {
+  tickets: number;
+  advisorSet: number;
+  hubspotWithoutAdvisor: number;
+  rowsSynced: number;
+  rowsFailed: number;
+}
+
+// Una sola vez (`npm run tickets:backfill-advisor`): pone el asesor en TODOS los
+// boletos ya emitidos de HubSpot (el de `hubspot_sync` o, si no lo hay, el propietario
+// actual del negocio) y reescribe la fila de cada boleto —web y HubSpot— en el Excel
+// de asistencia. No manda ningún correo ni toca `hubspot_sync`.
+export const backfillTicketOrigins = async (opts: { dryRun?: boolean } = {}): Promise<TicketOriginBackfill> => {
+  const dryRun = Boolean(opts.dryRun);
+  const stats: TicketOriginBackfill = { tickets: 0, advisorSet: 0, hubspotWithoutAdvisor: 0, rowsSynced: 0, rowsFailed: 0 };
+
+  const advisorByDeal = new Map<string, string>();
+  for (const r of await HubspotSync.find({ kind: 'item', status: 'issued' })) {
+    if (!r.dealId || advisorByDeal.has(r.dealId)) continue;
+    let name = r.advisorName || r.advisorEmail || '';
+    if (!name) {
+      try {
+        const deal = await hs(`/crm/v3/objects/deals/${r.dealId}?properties=hubspot_owner_id`);
+        const advisor = await getAdvisor(deal.properties?.hubspot_owner_id);
+        if (advisor && advisor.email !== r.attendeeEmail) name = advisor.name;
+      } catch (err) {
+        log(`no se pudo leer el propietario del negocio ${r.dealId}: ${(err as Error).message}`);
+      }
+    }
+    if (name) advisorByDeal.set(r.dealId, name);
+  }
+
+  const tickets = await EventTicket.find({});
+  stats.tickets = tickets.length;
+  for (const t of tickets) {
+    const deal = String(t.orderId).match(/^hubspot:(\d+)/i)?.[1];
+    if (!deal) continue;
+    const name = advisorByDeal.get(deal);
+    if (!name) { stats.hubspotWithoutAdvisor += 1; continue; }
+    if (t.advisorName === name) continue;
+    stats.advisorSet += 1;
+    if (!dryRun) { t.advisorName = name; await t.save(); }
+  }
+  if (dryRun || !isAttendanceSheetEnabled()) return stats;
+
+  // Google Sheets limita las escrituras (~60/min): una fila cada ~2 s, y un solo
+  // reintento tras una pausa si responde 429.
+  for (const t of tickets) {
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        const res = await syncTicketRow(t);
+        if (res && (t.sheetRow !== res.row || t.sheetTab !== res.tab)) {
+          t.sheetRow = res.row;
+          t.sheetTab = res.tab;
+          await t.save();
+        }
+        stats.rowsSynced += 1;
+        break;
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (attempt === 1 && /429|quota/i.test(msg)) { await sleep(65_000); continue; }
+        stats.rowsFailed += 1;
+        log(`no se pudo actualizar el Excel del boleto ${t.folio}: ${msg}`);
+        break;
+      }
+    }
+    await sleep(2200);
+  }
+  return stats;
+};
+
 const backfillAdvisor = async (record: IHubspotSyncDocument): Promise<void> => {
   if (!record.dealId || !env.hubspot.advisorCopy) return;
   if (Date.now() - new Date(record.createdAt).getTime() > ADVISOR_BACKFILL_WINDOW_MS) return;
@@ -450,6 +543,7 @@ const backfillAdvisor = async (record: IHubspotSyncDocument): Promise<void> => {
     record.advisorCopyAttempts = 0;
     await record.save();
     log(`negocio ${record.dealId}: asesor asignado después de emitir el boleto → ${advisor.email}`);
+    await applyAdvisorToTickets(record);
   } catch (err) {
     log(`no se pudo releer el propietario del negocio ${record.dealId}: ${(err as Error).message}`);
   }
@@ -652,6 +746,7 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
       currency: String(c.props.hs_line_item_currency_code || 'MXN'),
       purchasedAt: deal.closedAt ?? new Date(deal.modifiedMs).toISOString(),
       ticketType: parsed.tier,
+      advisorName: advisor && advisor.email !== email ? advisor.name : '',
     });
     const issuedFields = {
       status: 'issued' as const,

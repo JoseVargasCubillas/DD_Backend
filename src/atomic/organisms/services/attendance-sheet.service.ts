@@ -11,7 +11,7 @@
 
 import { google, sheets_v4 } from 'googleapis';
 import type { IEventTicketDocument } from '../../molecules/models/event-ticket.model.js';
-import { formatTicketOrderRef } from '../../atoms/helpers/event-ticket.helper.js';
+import { formatTicketOrderRef, isHubspotOrderId } from '../../atoms/helpers/event-ticket.helper.js';
 
 const SHEET_ID = process.env.ATTENDANCE_SHEET_ID || '';
 const SA_KEY_FILE = process.env.GOOGLE_SA_KEY_FILE
@@ -31,7 +31,10 @@ const HEADERS = [
   'Asistencia',
   'Hora check-in',
   'Registró',
+  'Origen / Asesor',
 ];
+const ORIGIN_COL_LETTER = 'N';
+const LAST_COL_LETTER = ORIGIN_COL_LETTER;
 const STATUS_COL = 10; // K (0-based) — "Asistencia"
 const GREEN = { red: 0.85, green: 0.95, blue: 0.85 };
 const WHITE = { red: 1, green: 1, blue: 1 };
@@ -75,6 +78,11 @@ const formatDateTimeEs = (value: Date | string | null | undefined): string => {
 const formatAmount = (amount: number, currency: string): string =>
   new Intl.NumberFormat('es-MX', { style: 'currency', currency: currency || 'MXN' }).format(amount);
 
+const ticketOrigin = (t: IEventTicketDocument): string => {
+  if (!isHubspotOrderId(t.orderId)) return 'Compra web';
+  return t.advisorName ? `Asesor: ${t.advisorName}` : 'Asesor (sin asignar)';
+};
+
 const ticketRow = (t: IEventTicketDocument): string[] => [
   t.folio,
   t.attendeeName,
@@ -89,6 +97,7 @@ const ticketRow = (t: IEventTicketDocument): string[] => [
   t.status === 'used' ? '✅ Asistió' : t.status === 'void' ? 'Anulado' : 'Pendiente',
   formatDateTimeEs(t.checkedInAt),
   t.checkedInBy ?? '',
+  ticketOrigin(t),
 ];
 
 // Google Sheets trata los nombres de pestaña sin distinguir mayúsculas
@@ -113,6 +122,13 @@ export const ensureEventTab = async (title: string): Promise<number> => {
   if (found?.sheetId != null) {
     tabCache.set(key, found.sheetId);
     tabNames.set(key, found.title ?? title);
+    // Pestañas creadas antes de la columna de origen: se agrega su encabezado.
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: `'${found.title ?? title}'!${ORIGIN_COL_LETTER}1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[HEADERS[HEADERS.length - 1]]] },
+    }).catch((err) => console.warn('[attendanceSheet] no se pudo escribir el encabezado de origen:', (err as Error).message));
     return found.sheetId;
   }
 
@@ -159,7 +175,7 @@ export const appendTicketRow = async (ticket: IEventTicketDocument): Promise<{ t
   const tab = actualTabName(wanted);
   const res = await getSheets().spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: `'${tab}'!A:M`,
+    range: `'${tab}'!A:${LAST_COL_LETTER}`,
     valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [ticketRow(ticket)] },
@@ -196,7 +212,7 @@ export const syncTicketRow = async (ticket: IEventTicketDocument): Promise<{ tab
   const sheets = getSheets();
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
-    range: `'${tab}'!A${row}:M${row}`,
+    range: `'${tab}'!A${row}:${LAST_COL_LETTER}${row}`,
     valueInputOption: 'RAW',
     requestBody: { values: [ticketRow(ticket)] },
   });

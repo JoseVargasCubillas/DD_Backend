@@ -41,6 +41,9 @@ export interface AdminTicket extends PublicTicket {
   attendeePhone: string;
   orderId: string;
   checkedInBy: string | null;
+  // 'hubspot' = venta cerrada por un asesor; 'web' = compra en la página.
+  source: 'hubspot' | 'web';
+  advisorName: string;
 }
 
 export type CheckInResult = 'ok' | 'alreadyUsed' | 'invalid' | 'void';
@@ -80,6 +83,8 @@ export const toAdminTicket = (t: IEventTicketDocument): AdminTicket => ({
   attendeePhone: t.attendeePhone,
   orderId: t.orderId,
   checkedInBy: t.checkedInBy,
+  source: isHubspotOrderId(t.orderId) ? 'hubspot' : 'web',
+  advisorName: t.advisorName ?? '',
 });
 
 const syncSheetBestEffort = async (ticket: IEventTicketDocument, mode: 'append' | 'update'): Promise<void> => {
@@ -148,6 +153,7 @@ interface TicketBatchInput {
   currency: string;
   purchasedAt: Date | string;
   ticketType?: string;
+  advisorName?: string;
 }
 
 // Crea un boleto por asiento y los agrega al Google Sheet de asistencia.
@@ -181,6 +187,7 @@ const issueTickets = async (input: TicketBatchInput): Promise<IEventTicketDocume
       status: TICKET_STATUS.VALID,
       sheetTab,
       ...(input.ticketType && { ticketType: input.ticketType }),
+      ...(input.advisorName && { advisorName: input.advisorName }),
     });
     await syncSheetBestEffort(ticket, 'append');
     created.push(ticket);
