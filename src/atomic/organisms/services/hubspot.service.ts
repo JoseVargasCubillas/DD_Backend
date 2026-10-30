@@ -283,6 +283,18 @@ const getAdvisor = async (ownerId?: string | null): Promise<{ email: string; nam
   }
 };
 
+// Tope diario de Gmail (550 5.4.5): no es culpa del correo, así que no gasta
+// intentos; se pausan los envíos de este módulo y se retoman solos.
+const SMTP_CAP_PAUSE_MS = 15 * 60 * 1000;
+let smtpPausedUntil = 0;
+const smtpPaused = (): boolean => Date.now() < smtpPausedUntil;
+const isSmtpCap = (err: unknown): boolean => {
+  const msg = String((err as Error)?.message ?? err);
+  if (!/5\.4\.5|Daily user sending limit/i.test(msg)) return false;
+  smtpPausedUntil = Date.now() + SMTP_CAP_PAUSE_MS;
+  return true;
+};
+
 const findItemRecord = async (dealId: string, lineItemId: string): Promise<IHubspotSyncDocument | null> =>
   HubspotSync.findOne({ kind: 'item', dealId, lineItemId });
 
@@ -305,7 +317,7 @@ const buildCards = async (tickets: IEventTicketDocument[]) =>
 // Eventos online con grupo de WhatsApp: manda (o reintenta) el correo con el
 // bloque verde de un solo uso.
 const deliverGroupEmail = async (record: IHubspotSyncDocument): Promise<boolean> => {
-  if (!record.groupKey || !record.inviteToken || !record.attendeeEmail) return false;
+  if (!record.groupKey || !record.inviteToken || !record.attendeeEmail || smtpPaused()) return false;
   try {
     const card = await cardFromToken(record.inviteToken, record.groupKey as GroupKey);
     await sendEventGroupEmail({
@@ -324,6 +336,7 @@ const deliverGroupEmail = async (record: IHubspotSyncDocument): Promise<boolean>
     await deliverAdvisorCopy(record);
     return true;
   } catch (err) {
+    if (isSmtpCap(err)) { log('tope diario de Gmail alcanzado — el correo de grupo se reintenta más tarde'); return false; }
     record.emailAttempts = (record.emailAttempts ?? 0) + 1;
     record.emailLastError = String((err as Error).message ?? err).slice(0, 300);
     await record.save();
@@ -336,7 +349,7 @@ const deliverGroupEmail = async (record: IHubspotSyncDocument): Promise<boolean>
 // web ya avisan a TI). Se manda después de que salió el correo del cliente y se
 // reintenta sola si falla.
 const deliverAdvisorCopy = async (record: IHubspotSyncDocument): Promise<boolean> => {
-  if (!record.advisorEmail || record.advisorCopySentAt || !record.emailSentAt || !record.attendeeEmail) return false;
+  if (!record.advisorEmail || record.advisorCopySentAt || !record.emailSentAt || !record.attendeeEmail || smtpPaused()) return false;
   try {
     const reference = formatTicketOrderRef(`hubspot:${record.dealId}`);
     if (record.groupKey && record.inviteToken) {
@@ -374,6 +387,7 @@ const deliverAdvisorCopy = async (record: IHubspotSyncDocument): Promise<boolean
     log(`copia enviada al asesor ${record.advisorEmail} (negocio ${record.dealId})`);
     return true;
   } catch (err) {
+    if (isSmtpCap(err)) { log(`tope diario de Gmail alcanzado — la copia al asesor ${record.advisorEmail} se reintenta más tarde`); return false; }
     record.advisorCopyAttempts = (record.advisorCopyAttempts ?? 0) + 1;
     await record.save();
     log(`copia al asesor falló (${record.advisorEmail}, intento ${record.advisorCopyAttempts}): ${String((err as Error).message ?? err).slice(0, 200)}`);
@@ -390,7 +404,7 @@ const deliverEmail = async (record: IHubspotSyncDocument): Promise<boolean> => {
     const t = await EventTicket.findOne({ folio });
     if (t) tickets.push(t);
   }
-  if (tickets.length === 0 || !record.attendeeEmail) return false;
+  if (tickets.length === 0 || !record.attendeeEmail || smtpPaused()) return false;
   try {
     await sendEventTicketsEmail({
       name: tickets[0].attendeeName,
@@ -404,11 +418,40 @@ const deliverEmail = async (record: IHubspotSyncDocument): Promise<boolean> => {
     await deliverAdvisorCopy(record);
     return true;
   } catch (err) {
+    if (isSmtpCap(err)) { log('tope diario de Gmail alcanzado — el correo se reintenta más tarde'); return false; }
     record.emailAttempts = (record.emailAttempts ?? 0) + 1;
     record.emailLastError = String((err as Error).message ?? err).slice(0, 300);
     await record.save();
     log(`correo falló (${record.attendeeEmail}, intento ${record.emailAttempts}): ${record.emailLastError}`);
     return false;
+  }
+};
+
+// El boleto se emite una sola vez; si en ese momento el negocio aún no tenía
+// propietario, el registro quedó sin asesor. Durante unos días se vuelve a
+// consultar el propietario del negocio para mandarle la copia cuando aparezca.
+const ADVISOR_BACKFILL_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+const ADVISOR_RECHECK_MS = 10 * 60 * 1000;
+const advisorCheckedAt = new Map<string, number>();
+
+const backfillAdvisor = async (record: IHubspotSyncDocument): Promise<void> => {
+  if (!record.dealId || !env.hubspot.advisorCopy) return;
+  if (Date.now() - new Date(record.createdAt).getTime() > ADVISOR_BACKFILL_WINDOW_MS) return;
+  const key = `${record.dealId}:${record.lineItemId}`;
+  if (Date.now() - (advisorCheckedAt.get(key) ?? 0) < ADVISOR_RECHECK_MS) return;
+  advisorCheckedAt.set(key, Date.now());
+  try {
+    const deal = await hs(`/crm/v3/objects/deals/${record.dealId}?properties=hubspot_owner_id`);
+    const advisor = await getAdvisor(deal.properties?.hubspot_owner_id);
+    if (!advisor || advisor.email === record.attendeeEmail) return;
+    record.advisorEmail = advisor.email;
+    record.advisorName = advisor.name;
+    record.advisorCopySentAt = null;
+    record.advisorCopyAttempts = 0;
+    await record.save();
+    log(`negocio ${record.dealId}: asesor asignado después de emitir el boleto → ${advisor.email}`);
+  } catch (err) {
+    log(`no se pudo releer el propietario del negocio ${record.dealId}: ${(err as Error).message}`);
   }
 };
 
@@ -418,7 +461,10 @@ const retryPendingEmails = async (): Promise<number> => {
   for (const record of issued) {
     if (!record.emailSentAt) {
       if ((record.emailAttempts ?? 0) < MAX_EMAIL_ATTEMPTS && (await deliverEmail(record))) sent += 1;
-    } else if (record.advisorEmail && !record.advisorCopySentAt && (record.advisorCopyAttempts ?? 0) < MAX_EMAIL_ATTEMPTS) {
+      continue;
+    }
+    if (!record.advisorEmail && !record.advisorCopySentAt) await backfillAdvisor(record);
+    if (record.advisorEmail && !record.advisorCopySentAt && (record.advisorCopyAttempts ?? 0) < MAX_EMAIL_ATTEMPTS) {
       await deliverAdvisorCopy(record);
     }
   }
@@ -688,6 +734,16 @@ const runSyncCycle = async (opts: { dryRun?: boolean; since?: string } = {}): Pr
     if (!override) return summary;
   }
 
+  // Los correos pendientes se reintentan primero: si HubSpot falla en la búsqueda
+  // de negocios (500) no deben quedarse esperando.
+  if (!dryRun && state) {
+    try {
+      summary.emailsSent += await retryPendingEmails();
+    } catch (err) {
+      log(`reintento de correos falló: ${(err as Error).message}`);
+    }
+  }
+
   const cursorMs = new Date(cursorIso ?? Date.now()).getTime();
   const deals = await fetchWonDeals(cursorMs - OVERLAP_MS);
   summary.deals = deals.length;
@@ -721,7 +777,6 @@ const runSyncCycle = async (opts: { dryRun?: boolean; since?: string } = {}): Pr
     state.lastRunAt = new Date().toISOString();
     await state.save();
     await reprocessPendingEvents(summary);
-    summary.emailsSent += await retryPendingEmails();
   }
   return summary;
 };
