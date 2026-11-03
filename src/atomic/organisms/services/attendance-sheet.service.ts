@@ -240,6 +240,16 @@ export const syncTicketRow = async (ticket: IEventTicketDocument): Promise<{ tab
   return { tab, row };
 };
 
+// Vacía la fila de un boleto que se movió a otra pestaña (no borra la fila, así
+// los números de fila de los demás boletos siguen valiendo).
+export const clearTicketRow = async (tab: string, row: number): Promise<void> => {
+  if (!SHEET_ID || row < 2) return;
+  await getSheets().spreadsheets.values.clear({
+    spreadsheetId: SHEET_ID,
+    range: `'${tab}'!A${row}:${LAST_COL_LETTER}${row}`,
+  });
+};
+
 export const getTabUrl = async (tab: string): Promise<string | null> => {
   if (!SHEET_ID) return null;
   try {

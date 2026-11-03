@@ -12,6 +12,7 @@ import {
 } from '../../atoms/helpers/ticket-token.helper.js';
 import { formatEventDateLabel, formatEventFormatLabel, formatTicketOrderRef, isHubspotOrderId } from '../../atoms/helpers/event-ticket.helper.js';
 import * as attendanceSheet from './attendance-sheet.service.js';
+import { loadCatalog } from './event-catalog.service.js';
 
 export interface PublicTicket {
   folio: string;
@@ -107,11 +108,13 @@ const syncSheetBestEffort = async (ticket: IEventTicketDocument, mode: 'append' 
 // refId puede ser el id de un Event en DB o el slug de catálogo del frontend.
 const resolveEventMeta = async (item: IOrderDocument['items'][number]) => {
   let eventSlug = '';
+  let eventRefId = String(item.refId || '');
   let eventDate = item.eventDate || '';
   let eventFormat = item.eventFormat || '';
   let eventModality: string | null = null;
   let title = item.title;
-  const ref = String(item.refId || '');
+  let ticketType: string | undefined;
+  const ref = eventRefId;
   if (ref) {
     const event = UUID_RE.test(ref) ? await Event.findById(ref) : await Event.findOne({ slug: ref });
     if (event) {
@@ -124,7 +127,36 @@ const resolveEventMeta = async (item: IOrderDocument['items'][number]) => {
       eventSlug = ref;
     }
   }
-  return { eventSlug, eventDate, eventFormat, title, modality: eventModality };
+
+  // Los boletos por nivel (p. ej. "estrategia-fiscal-general") llevan como refId
+  // el nivel, no la edición. Se resuelve la edición real (id/slug que guardó el
+  // pedido) para emitir con la misma referencia, título y pestaña del Sheet que
+  // usan las ventas de HubSpot; si no, la misma fecha queda en dos pestañas.
+  if (!eventModality && (item.eventId || item.eventSlug)) {
+    const edition =
+      (item.eventId ? await Event.findById(String(item.eventId)) : null) ??
+      (item.eventSlug ? await Event.findOne({ slug: String(item.eventSlug) }) : null);
+    if (edition) {
+      eventRefId = String(edition._id);
+      eventSlug = edition.slug;
+      eventModality = edition.modality || null;
+      title = edition.title || title;
+      eventDate = formatEventDateLabel(edition.startDate, edition.endDate) || eventDate;
+    } else if (item.eventSlug) {
+      const entry = (await loadCatalog()).find((e) => e.slug === String(item.eventSlug));
+      if (entry) {
+        eventRefId = entry.slug;
+        eventSlug = entry.slug;
+        title = entry.title || title;
+        eventDate = formatEventDateLabel(entry.startDate, entry.endDate) || eventDate;
+      }
+    }
+    if (eventRefId !== ref) {
+      const tier = ref.match(/-(general|vip)$/i)?.[1];
+      if (tier) ticketType = tier.toUpperCase() === 'VIP' ? 'VIP' : 'General';
+    }
+  }
+  return { eventRefId, eventSlug, eventDate, eventFormat, title, modality: eventModality, ticketType };
 };
 
 // Solo los eventos presenciales (o híbridos) llevan boleto con QR. Con un
@@ -222,8 +254,9 @@ export const createTicketsForOrder = async (
         orderId,
         orderItemIndex: index,
         seatTotal: Math.max(1, Number(item.quantity) || 1),
-        eventRefId: String(item.refId || ''),
+        eventRefId: meta.eventRefId,
         eventSlug: meta.eventSlug,
+        ticketType: meta.ticketType,
         eventTitle: meta.title,
         eventDate: meta.eventDate,
         eventFormat: meta.eventFormat,

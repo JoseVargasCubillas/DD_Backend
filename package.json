@@ -18,6 +18,7 @@
         "report:sheet-sync": "tsx src/scripts/daily-sheet-report.ts",
         "hubspot:sync": "tsx src/scripts/hubspot-sync.ts",
         "tickets:backfill-advisor": "tsx src/scripts/backfill-ticket-advisors.ts",
+        "tickets:merge-edition": "tsx src/scripts/merge-event-tickets.ts",
         "catalog:gen": "tsx src/scripts/gen-event-catalog.ts"
     },
     "dependencies": {

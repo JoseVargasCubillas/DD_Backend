@@ -120,6 +120,7 @@ const normalizeOrderItems = async (items: OrderItemInput[]): Promise<OrderItemIn
                null)
             : null;
           const linkedEventId = linkedEvent ? String(linkedEvent._id) : '';
+          const eventSlug = linkedEvent?.slug || sanitizeTicketLabel(item.eventSlug).toLowerCase();
           return {
             type: 'event',
             refId,
@@ -129,6 +130,7 @@ const normalizeOrderItems = async (items: OrderItemInput[]): Promise<OrderItemIn
             ...(eventDate && { eventDate }),
             ...(eventFormat && { eventFormat }),
             ...(linkedEventId && { eventId: linkedEventId }),
+            ...(eventSlug && { eventSlug }),
           };
         }
 

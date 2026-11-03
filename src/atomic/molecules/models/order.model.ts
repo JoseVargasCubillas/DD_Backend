@@ -19,6 +19,8 @@ interface OrderItem {
   // Solo para type === 'event' — edición comprada (ver buildEventTicketTitle).
   eventDate?: string;
   eventId?: string;
+  // Slug de la edición (DB o calendario fijo): une la compra web con las ventas de HubSpot.
+  eventSlug?: string;
   eventFormat?: string;
 }
 
