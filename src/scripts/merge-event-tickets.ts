@@ -42,16 +42,24 @@ const main = async () => {
   console.log(`Pestaña canónica: ${tab}\n`);
 
   const wantedTitle = norm(name);
-  const strays = (await EventTicket.find({})).filter((t) =>
-    t.eventDate === dateLabel
-    && norm(t.eventTitle).includes(wantedTitle)
-    && t.eventRefId !== event.refId
-    && t.eventSlug !== event.slug);
+  const all = await EventTicket.find({});
+  const isVoidTarget = (folio: string): boolean => voidPrefixes.some((p) => folio.toUpperCase().startsWith(p));
+  // Los folios de --void se buscan directo: una prueba puede estar ya en la
+  // edición canónica o con otra referencia y aun así hay que anularla.
+  const strays = all.filter((t) =>
+    isVoidTarget(t.folio)
+    || (t.eventDate === dateLabel
+      && norm(t.eventTitle).includes(wantedTitle)
+      && t.eventRefId !== event.refId
+      && t.eventSlug !== event.slug));
 
+  for (const p of voidPrefixes) {
+    if (!all.some((t) => t.folio.toUpperCase().startsWith(p))) console.warn(`⚠ --void ${p}: ningún boleto empieza con ese folio`);
+  }
   if (strays.length === 0) console.log('No hay boletos fuera de la edición canónica.');
 
   for (const t of strays) {
-    const toVoid = voidPrefixes.some((p) => t.folio.toUpperCase().startsWith(p));
+    const toVoid = isVoidTarget(t.folio);
     const tier = t.ticketType || t.eventRefId.match(/-(general|vip)$/i)?.[1]?.replace(/^./, (c) => c.toUpperCase());
     const action = toVoid ? 'ANULAR' : 'MOVER';
     console.log(`${action} ${t.folio} · ${t.attendeeName} <${t.attendeeEmail}> · ${t.eventTitle} · ${t.sheetTab}#${t.sheetRow ?? '-'} · ${t.status}`);
