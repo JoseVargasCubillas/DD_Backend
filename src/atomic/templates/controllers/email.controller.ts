@@ -11,6 +11,11 @@ import {
   runCampaignInBackground,
 } from '../../organisms/services/email-campaign.service.js';
 import { getQueueStatus } from '../../organisms/services/email-queue.service.js';
+import {
+  countDownloadables,
+  findDownloadableLeads,
+  parseDownloadableIds,
+} from '../../atoms/helpers/downloadables.helper.js';
 import { success, badRequest, forbidden, notFound, serverError } from '../../atoms/helpers/response.helper.js';
 
 interface Recipient {
@@ -61,19 +66,33 @@ const dedupeByEmail = (list: Recipient[]): Recipient[] => {
   return Array.from(map.values());
 };
 
+const leadToRecipient = (l: { name?: string; email: string; source?: string }): Recipient => ({
+  name: l.name ?? '',
+  email: l.email,
+  tags: leadOriginTags(l.source),
+});
+
 const fetchLeadRecipients = async (source?: string): Promise<Recipient[]> => {
   const filter = source ? { source } : {};
   const leads = await Lead.find(filter);
-  return leads
-    .filter((l) => !l.unsubscribed)
-    .map((l) => ({ name: l.name ?? '', email: l.email, tags: leadOriginTags(l.source) }));
+  return leads.filter((l) => !l.unsubscribed).map(leadToRecipient);
 };
+
+interface TargetOptions {
+  // Solo con segment === 'downloadables': ids del catálogo (vacío = todos los descargables).
+  downloadableIds?: string[];
+}
 
 const resolveTargets = async (
   segment: string,
   allUsers: IUserDocument[],
+  options: TargetOptions = {},
 ): Promise<Recipient[]> => {
   // Segmentos basados en tabla `leads`
+  if (segment === 'downloadables') {
+    const leads = await findDownloadableLeads(options.downloadableIds ?? []);
+    return dedupeByEmail(leads.map(leadToRecipient));
+  }
   if (segment === 'guide-leads') {
     const recs: Recipient[] = [];
     for (const source of GUIDE_LEAD_SOURCES) {
@@ -100,9 +119,16 @@ const resolveTargets = async (
   } else if (segment !== 'all') {
     userTargets = userTargets.filter((u) => u.tagIds?.includes(segment));
   }
-  return dedupeByEmail(
-    userTargets.map((u) => ({ name: u.name, email: u.email, tags: userOriginTags(u) })),
-  );
+  const userRecipients: Recipient[] = userTargets.map((u) => ({
+    name: u.name,
+    email: u.email,
+    tags: userOriginTags(u),
+  }));
+  // 'all' = cuentas de la plataforma + todos los leads capturados (formularios, descargables, newsletter)
+  if (segment === 'all') {
+    return dedupeByEmail([...userRecipients, ...(await fetchLeadRecipients())]);
+  }
+  return dedupeByEmail(userRecipients);
 };
 
 /**
@@ -185,6 +211,8 @@ interface BroadcastBody {
   source?: 'web' | 'mailchimp';
   segment?: string;
   segmentLabel?: string;
+  // Solo con segment === 'downloadables': ids del catálogo (vacío = todos los descargables).
+  downloadableIds?: string[];
   // Solo con segment === 'custom'.
   emails?: string[];
   // Solo con segment === 'custom': contactos con nombre (de un CSV o pegados). Sin tope de cantidad.
@@ -232,7 +260,9 @@ const planWebSend = async (
     label = `Personalizado (${targets.length})`;
   } else {
     const allUsers = await User.find({ isActive: true });
-    targets = await resolveTargets(segment, allUsers);
+    targets = await resolveTargets(segment, allUsers, {
+      downloadableIds: parseDownloadableIds(body.downloadableIds),
+    });
   }
 
   if (targets.length === 0) {
@@ -703,7 +733,9 @@ export const getSegmentContacts: RequestHandler = async (req, res) => {
       'name email contactStatus marketingStatus tagIds',
     );
 
-    const targets = await resolveTargets(segment, allUsers);
+    const targets = await resolveTargets(segment, allUsers, {
+      downloadableIds: parseDownloadableIds(req.query.downloadableIds),
+    });
     success(res, targets);
   } catch (err: any) {
     serverError(res, err);
@@ -745,8 +777,16 @@ export const getSegments: RequestHandler = async (_req, res) => {
     const iniciativaFiscal2027 = allLeads.filter((l) => l.source === 'iniciativa-fiscal-2027').length;
     const newsletterLeads = allLeads.filter((l) => l.source === 'newsletter').length;
 
+    const activeLeads = allLeads.filter((l) => !l.unsubscribed);
+    const allRecipients = dedupeByEmail([
+      ...allUsers.map((u) => ({ name: u.name, email: u.email })),
+      ...activeLeads.map((l) => ({ name: l.name ?? '', email: l.email })),
+    ]);
+    const downloadables = countDownloadables(allLeads);
+
     const segments = {
-      all: allUsers.length,
+      all: allRecipients.length,
+      accounts: allUsers.length,
       subscribed: allUsers.filter((u) => u.marketingStatus === 'subscribed').length,
       customers: allUsers.filter((u) => u.contactStatus === 'customer').length,
       leads: allUsers.filter((u) => u.contactStatus === 'lead').length,
@@ -754,6 +794,10 @@ export const getSegments: RequestHandler = async (_req, res) => {
       newsletterLeads,
       guiaSat,
       iniciativaFiscal2027,
+      downloadables: dedupeByEmail(
+        (await findDownloadableLeads([])).map((l) => ({ name: l.name ?? '', email: l.email })),
+      ).length,
+      downloadableOptions: downloadables,
     };
 
     success(res, segments);

@@ -7,6 +7,7 @@ import {
   type BulkRecipient,
 } from '../../organisms/services/whatsapp.service.js';
 import { success, badRequest, serverError } from '../../atoms/helpers/response.helper.js';
+import { findDownloadableLeads, parseDownloadableIds } from '../../atoms/helpers/downloadables.helper.js';
 
 interface Recipient {
   name: string;
@@ -50,7 +51,12 @@ const fetchLeadRecipients = async (source?: string): Promise<Recipient[]> => {
 const resolveTargets = async (
   segment: string,
   allUsers: IUserDocument[],
+  downloadableIds: string[] = [],
 ): Promise<Recipient[]> => {
+  if (segment === 'downloadables') {
+    const leads = await findDownloadableLeads(downloadableIds);
+    return dedupeByPhone(leads.map((l) => ({ name: l.name ?? '', phone: l.phone ?? '', email: l.email })));
+  }
   if (segment === 'guide-leads') {
     const recs: Recipient[] = [];
     for (const source of GUIDE_LEAD_SOURCES) {
@@ -77,13 +83,15 @@ const resolveTargets = async (
     userTargets = allUsers.filter((u) => u.tagIds?.includes(segment));
   }
 
-  return dedupeByPhone(
-    userTargets.map((u) => ({
-      name: u.name,
-      phone: (u as { phone?: string }).phone ?? '',
-      email: u.email,
-    })),
-  );
+  const userRecs: Recipient[] = userTargets.map((u) => ({
+    name: u.name,
+    phone: (u as { phone?: string }).phone ?? '',
+    email: u.email,
+  }));
+  if (segment === 'all') {
+    return dedupeByPhone([...userRecs, ...(await fetchLeadRecipients())]);
+  }
+  return dedupeByPhone(userRecs);
 };
 
 /**
@@ -101,9 +109,10 @@ export const sendBroadcast: RequestHandler = async (req, res) => {
       );
     }
 
-    const { message, segment = 'subscribed' } = req.body as {
+    const { message, segment = 'subscribed', downloadableIds } = req.body as {
       message: string;
       segment?: string;
+      downloadableIds?: string[];
     };
 
     if (!message?.trim()) return badRequest(res, 'El mensaje es requerido.');
@@ -112,7 +121,7 @@ export const sendBroadcast: RequestHandler = async (req, res) => {
     }
 
     const allUsers = await User.find({ isActive: true });
-    const targets = await resolveTargets(segment, allUsers);
+    const targets = await resolveTargets(segment, allUsers, parseDownloadableIds(downloadableIds));
 
     if (targets.length === 0) {
       return badRequest(res, 'No hay destinatarios con telefono en el segmento seleccionado.');
@@ -138,7 +147,11 @@ export const getSegmentContacts: RequestHandler = async (req, res) => {
     const allUsers = await User.find({ isActive: true }).select(
       'name email phone contactStatus marketingStatus tagIds',
     );
-    const targets = await resolveTargets(segment, allUsers);
+    const targets = await resolveTargets(
+      segment,
+      allUsers,
+      parseDownloadableIds(req.query.downloadableIds),
+    );
     success(res, targets);
   } catch (err) {
     serverError(res, err as Error);
@@ -183,7 +196,7 @@ export const getSegments: RequestHandler = async (_req, res) => {
     );
 
     const segments = {
-      all: countWithPhone(usersAsRecs),
+      all: countWithPhone([...usersAsRecs, ...leadsAsRecs]),
       subscribed: countWithPhone(
         usersAsRecs.filter((_, idx) => allUsers[idx].marketingStatus === 'subscribed'),
       ),
