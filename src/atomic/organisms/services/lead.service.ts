@@ -5,6 +5,7 @@ import { User } from '../../molecules/models/user.model.js';
 import { Tag } from '../../molecules/models/tag.model.js';
 import { isAllowedOrigin } from '../../../config/allowed-origins.js';
 import { env } from '../../../config/env.js';
+import { syncContactToHubspot } from './hubspot-contact.service.js';
 import {
   sendDownloadableResourceEmail,
   sendEstrategiaFiscalDossierEmail,
@@ -69,6 +70,24 @@ const scheduleForRetry = async (
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Texto para "Detalle de la fuente del registro" en HubSpot.
+const HUBSPOT_SOURCE_LABELS: Record<string, string> = {
+  'iniciativa-fiscal-2027': 'Descarga: Iniciativa Fiscal 2027',
+  'guia-blindaje-sat': 'Descarga: Guía SAT',
+  'media-kit': 'Descarga: Media Kit',
+  'estrategia-fiscal-dossier': 'Descarga: Dossier Estrategia Fiscal',
+  'libro-sat-waitlist': 'Lista de espera: Libro SAT',
+  newsletter: 'Newsletter',
+  contact: 'Formulario de contacto',
+};
+const leadSourceDetail = (source: string, meta?: Record<string, unknown>): string => {
+  if (source === 'centro-recursos') {
+    const title = typeof meta?.deliveredResource === 'string' ? meta.deliveredResource.trim() : '';
+    return `Web · Descarga: ${title || 'Centro de recursos'}`.slice(0, 200);
+  }
+  return `Web · ${HUBSPOT_SOURCE_LABELS[source] ?? source}`;
+};
+
 const normalizeEmail = (value: string): string => value.trim().toLowerCase();
 
 const isAllowedResourceUrl = (value: string): boolean => {
@@ -101,6 +120,15 @@ export const captureLead = async (input: {
     err.statusCode = 400;
     throw err;
   }
+
+  // Todo lead orgánico (descarga, newsletter, lista de espera) debe existir en
+  // HubSpot; si ya está allí no se modifica.
+  syncContactToHubspot({
+    email,
+    name: input.name,
+    phone: input.phone,
+    sourceDetail: leadSourceDetail(input.source, input.meta),
+  });
 
   const existing = await findByEmailAndSource(email, input.source);
   if (existing) {

@@ -112,6 +112,15 @@ export const getOrders: RequestHandler = async (req, res) => {
   } catch (err: any) { serverError(res, err); }
 };
 
+// GET /payments/admin/orders — todas las transacciones. Lo autoriza el middleware
+// adminOrReadApiKey (admin con sesión o clave API de solo lectura), así que aquí
+// no se vuelve a revisar el rol.
+export const listAllOrders: RequestHandler = async (_req, res) => {
+  try {
+    success(res, await paymentService.getAllOrders());
+  } catch (err: any) { serverError(res, err); }
+};
+
 export const deleteOrder: RequestHandler = async (req, res) => {
   try {
     const deleted = await paymentService.deleteOrder(String(req.params.id));

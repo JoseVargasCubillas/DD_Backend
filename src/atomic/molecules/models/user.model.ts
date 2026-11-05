@@ -24,6 +24,9 @@ export interface IUserDocument extends SqlDocumentMethods<IUserDocument> {
   resetPasswordToken?: string;
   resetPasswordExpires?: Date | string;
   mustChangePassword?: boolean;
+  // Intento de compra pendiente de subir a HubSpot (worker diario). Solo se sube
+  // si el usuario sigue sin comprar pasado el plazo; ver hubspot-contact.service.ts.
+  hubspotPending?: { at: string; items: string[]; syncedAt?: string };
   lastLogin?: Date | string;
   createdAt: Date | string;
   updatedAt: Date | string;

@@ -118,6 +118,12 @@ export const env = {
   hubspot: {
     token: process.env.HUBSPOT_TOKEN ?? '',
     syncEnabled: process.env.HUBSPOT_SYNC_ENABLED !== 'false',
+    // Alta automática de contactos orgánicos (descargas, registro, checkout, compra).
+    contactSyncEnabled: process.env.HUBSPOT_CONTACT_SYNC_ENABLED !== 'false',
+    // Intentos de compra sin pagar: una corrida al día (hora de México) sube a HubSpot
+    // los que llevan al menos N horas sin comprar.
+    abandonedAfterHours: Math.max(1, Number(process.env.HUBSPOT_ABANDONED_AFTER_HOURS) || 24),
+    abandonedRunHour: Math.min(23, Math.max(0, Number(process.env.HUBSPOT_ABANDONED_RUN_HOUR) || 10)),
     pipelineId: process.env.HUBSPOT_PIPELINE_ID ?? 'default',
     wonStageId: process.env.HUBSPOT_WON_STAGE_ID ?? 'closedwon',
     pollIntervalMs: Math.max(60, Number(process.env.HUBSPOT_POLL_INTERVAL_SEC) || 300) * 1000,
@@ -130,6 +136,9 @@ export const env = {
     advisorCopy: process.env.HUBSPOT_ADVISOR_COPY !== 'false',
     eventAliases: parseAliases(`${DEFAULT_EVENT_ALIASES};${process.env.HUBSPOT_EVENT_ALIASES ?? ''}`),
   },
+  // Clave de SOLO LECTURA para integraciones (n8n / ranking) en lugar de iniciar
+  // sesión con la cuenta admin. Vacía = deshabilitada. Ver apiKey.middleware.ts.
+  readApiKey: process.env.READ_API_KEY ?? '',
   whatsapp: {
     businessGroupUrl: process.env.WHATSAPP_GROUP_BUSINESS_URL ?? '',
     masterGroupUrl: process.env.WHATSAPP_GROUP_MASTER_URL ?? '',

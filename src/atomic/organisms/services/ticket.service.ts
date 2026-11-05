@@ -47,7 +47,8 @@ export interface AdminTicket extends PublicTicket {
   advisorName: string;
 }
 
-export type CheckInResult = 'ok' | 'alreadyUsed' | 'invalid' | 'void';
+// 'wrongEvent': el boleto es de otro evento/fecha que el que fijó el escáner.
+export type CheckInResult = 'ok' | 'alreadyUsed' | 'invalid' | 'void' | 'wrongEvent';
 
 const toIso = (value: Date | string | null | undefined): string | null => {
   if (!value) return null;
@@ -340,16 +341,124 @@ export const renderTicketQrBuffer = async (ticket: IEventTicketDocument): Promis
     color: { dark: '#17130f', light: '#ffffff' },
   });
 
+const normText = (s: string): string =>
+  String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+// Una "edición" = misma fecha y títulos que se contienen entre sí. Es la regla
+// de merge-event-tickets: un boleto web ("Taller de estrategia fiscal · General ·
+// Monterrey") y uno de HubSpot ("Taller de estrategia fiscal") de la misma fecha
+// cuentan como la misma edición aunque su título, refId o slug difieran.
+export const editionKey = (eventTitle: string, eventDate: string): string =>
+  `${normText(eventTitle)}|${String(eventDate ?? '').trim()}`;
+
+export const matchesEdition = (t: { eventTitle: string; eventDate: string }, key: string): boolean => {
+  const sep = key.lastIndexOf('|');
+  if (sep < 0) return false;
+  const keyTitle = key.slice(0, sep);
+  const keyDate = key.slice(sep + 1);
+  if (String(t.eventDate ?? '').trim() !== keyDate) return false;
+  const title = normText(t.eventTitle);
+  return Boolean(title && keyTitle) && (title.includes(keyTitle) || keyTitle.includes(title));
+};
+
+const MONTHS_ES: Record<string, number> = {
+  enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7,
+  agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12,
+};
+
+// Respaldo cuando no se encuentra el Event/calendario: "Viernes 6 de noviembre de
+// 2026" -> ISO al mediodía de CDMX, solo para proponer el evento más cercano a hoy.
+const parseDateLabel = (label: string): string | null => {
+  const m = normText(label).match(/(\d{1,2}) de ([a-z]+) de (\d{4})/);
+  const month = m ? MONTHS_ES[m[2]] : undefined;
+  if (!m || !month) return null;
+  return toIso(`${m[3]}-${String(month).padStart(2, '0')}-${m[1].padStart(2, '0')}T12:00:00-06:00`);
+};
+
+export interface CheckInEventOption {
+  key: string;
+  title: string;
+  dateLabel: string;
+  startDate: string | null;
+  total: number;
+  checkedIn: number;
+}
+
+// Eventos que tienen boletos (sin anulados), para el selector del escáner.
+export const listCheckInEvents = async (): Promise<CheckInEventOption[]> => {
+  // Títulos cortos primero: el corto ("Taller de estrategia fiscal") queda como
+  // canónico y los largos ("… · General · Monterrey") se unen a su misma edición.
+  const all = (await EventTicket.find({}))
+    .filter((t) => t.status !== TICKET_STATUS.VOID)
+    .sort((a, b) => normText(a.eventTitle).length - normText(b.eventTitle).length);
+  const groups = new Map<string, { sample: IEventTicketDocument; total: number; checkedIn: number }>();
+  for (const t of all) {
+    const existing = [...groups.entries()].find(([key]) => matchesEdition(t, key));
+    const key = existing ? existing[0] : editionKey(t.eventTitle, t.eventDate);
+    const group = existing ? existing[1] : { sample: t, total: 0, checkedIn: 0 };
+    group.total += 1;
+    if (t.status === TICKET_STATUS.USED) group.checkedIn += 1;
+    groups.set(key, group);
+  }
+
+  const catalog = await loadCatalog();
+  const options: CheckInEventOption[] = [];
+  for (const [key, group] of groups) {
+    const { eventRefId, eventSlug } = group.sample;
+    // Fecha de inicio (ISO) para que el escáner proponga el evento de hoy.
+    let start: Date | string | null = null;
+    const event = UUID_RE.test(String(eventRefId))
+      ? await Event.findById(String(eventRefId))
+      : eventSlug ? await Event.findOne({ slug: eventSlug }) : null;
+    if (event) {
+      start = event.startDate;
+    } else {
+      const entry = catalog.find((e) => e.slug === eventSlug || e.slug === eventRefId);
+      if (entry) start = entry.startDate;
+    }
+    options.push({
+      key,
+      title: group.sample.eventTitle,
+      dateLabel: group.sample.eventDate,
+      startDate: toIso(start) ?? parseDateLabel(group.sample.eventDate),
+      total: group.total,
+      checkedIn: group.checkedIn,
+    });
+  }
+  return options.sort((a, b) => (a.startDate ?? '9999').localeCompare(b.startDate ?? '9999'));
+};
+
+// El personal de entrada (staff) solo necesita nombre, folio y evento: se le
+// quitan los datos de contacto y de compra del asistente.
+export const redactTicketForStaff = (t: AdminTicket): AdminTicket => ({
+  ...t,
+  attendeeEmail: '',
+  attendeePhone: '',
+  orderId: '',
+  orderReference: '',
+  orderLabel: '',
+  advisorName: '',
+  amount: 0,
+  url: '',
+  qrUrl: '',
+});
+
 export const checkInTicket = async (
   rawFolio: string,
   signature: unknown,
   adminLabel: string,
+  eventKey = '',
 ): Promise<{ result: CheckInResult; ticket?: AdminTicket }> => {
   const ticket = await findTicketByFolio(rawFolio);
   if (!ticket) return { result: 'invalid' };
-  // Con firma se valida; sin firma (folio dictado a mano por el admin) se
-  // acepta porque el endpoint ya exige sesión de administrador.
+  // Con firma se valida; sin firma (folio dictado a mano) se acepta porque el
+  // endpoint ya exige sesión de administrador o staff.
   if (signature && !verifyFolioSignature(ticket.folio, signature)) return { result: 'invalid' };
+  // Si el escáner fijó un evento, el boleto debe ser de esa edición: no se
+  // registra asistencia de un boleto de otro evento o de otra fecha.
+  if (eventKey && !matchesEdition(ticket, eventKey)) {
+    return { result: 'wrongEvent', ticket: toAdminTicket(ticket) };
+  }
   if (ticket.status === TICKET_STATUS.VOID) return { result: 'void', ticket: toAdminTicket(ticket) };
   if (ticket.status === TICKET_STATUS.USED) return { result: 'alreadyUsed', ticket: toAdminTicket(ticket) };
 

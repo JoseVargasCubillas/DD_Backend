@@ -8,3 +8,6 @@ export const requireRole = (...roles: string[]): RequestHandler => (req, res, ne
 };
 
 export const requireAdmin = requireRole('admin');
+
+// Escáner de entrada: el personal (staff) solo puede registrar asistencia.
+export const requireStaff = requireRole('admin', 'staff');

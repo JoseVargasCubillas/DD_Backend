@@ -211,6 +211,20 @@ export const clearIncompletePayment = async (userId: string, itemTitle: string):
   } as Partial<IUserDocument>);
 };
 
+// Anota el intento de compra para que el worker diario lo suba a HubSpot si el
+// usuario sigue sin comprar. Conserva la fecha del primer intento y no reabre
+// uno que ya se subió.
+export const markHubspotCheckoutAttempt = async (userId: string, itemTitles: string[]): Promise<void> => {
+  const user = await User.findById(userId);
+  if (!user || user.contactStatus === 'customer') return;
+  const current = user.hubspotPending;
+  if (current?.syncedAt) return;
+  const items = Array.from(new Set([...(current?.items ?? []), ...itemTitles]));
+  await User.findByIdAndUpdate(userId, {
+    hubspotPending: { at: current?.at ?? new Date().toISOString(), items },
+  } as Partial<IUserDocument>);
+};
+
 export const getById = async (id: string): Promise<IUserDocument> => {
   const user = await User.findById(id).populate('enrolledCourses', 'title slug thumbnail category shortDescription');
   if (!user) throw makeError('User not found', 404);

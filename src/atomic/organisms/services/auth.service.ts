@@ -7,6 +7,7 @@ import { AuthResult } from '../../../types/index.js';
 import { sendCredentials, sendPasswordReset } from './email.service.js';
 import { enqueueUserCredentials } from './email-queue.service.js';
 import { env } from '../../../config/env.js';
+import { syncContactToHubspot } from './hubspot-contact.service.js';
 
 const IS_EMAIL_TRANSIENT_FAILURE = (err: unknown): boolean => {
   const msg = String((err as { message?: string })?.message ?? err ?? '').toLowerCase();
@@ -24,7 +25,7 @@ interface AdminCreateUserInput {
   name: string;
   email: string;
   phone?: string;
-  role?: 'user' | 'admin';
+  role?: 'user' | 'admin' | 'staff';
   tagIds?: string[];
   courseIds?: string[];
   marketingStatus?: 'never_subscribed' | 'subscribed' | 'unsubscribed';
@@ -51,6 +52,7 @@ export const register = async ({ name, email: rawEmail, password }: RegisterInpu
 
   const hashed = await hashPassword(password);
   const user = await User.create({ name, email, password: hashed });
+  syncContactToHubspot({ email: user.email, name: user.name, sourceDetail: 'Web · Registro' });
   return {
     user: { _id: String(user._id), name: user.name, email: user.email, role: user.role as any },
     accessToken: signAccessToken({ id: String(user._id), role: user.role }),

@@ -17,6 +17,7 @@
         "masterclass:live": "tsx src/scripts/masterclass-40hrs-blast.ts live",
         "report:sheet-sync": "tsx src/scripts/daily-sheet-report.ts",
         "hubspot:sync": "tsx src/scripts/hubspot-sync.ts",
+        "hubspot:backfill-attempts": "tsx src/scripts/hubspot-backfill-attempts.ts",
         "tickets:backfill-advisor": "tsx src/scripts/backfill-ticket-advisors.ts",
         "tickets:merge-edition": "tsx src/scripts/merge-event-tickets.ts",
         "catalog:gen": "tsx src/scripts/gen-event-catalog.ts"

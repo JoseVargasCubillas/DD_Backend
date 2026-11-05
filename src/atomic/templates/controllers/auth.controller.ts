@@ -69,12 +69,13 @@ export const adminCreateUser: RequestHandler = async (req, res) => {
     name?: string;
     email?: string;
     phone?: string;
-    role?: 'user' | 'admin';
+    role?: 'user' | 'admin' | 'staff';
     tagIds?: string[];
     courseIds?: string[];
     marketingStatus?: 'never_subscribed' | 'subscribed' | 'unsubscribed';
   };
   if (!name || !email) { badRequest(res, 'name y email son requeridos'); return; }
+  if (role && !['user', 'admin', 'staff'].includes(role)) { badRequest(res, 'Rol inválido'); return; }
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { badRequest(res, 'Email inválido'); return; }
   try {
     const result = await authService.adminCreateUser({ name, email, phone, role, tagIds, courseIds, marketingStatus });

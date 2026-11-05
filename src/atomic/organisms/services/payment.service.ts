@@ -19,7 +19,7 @@ import { buildShippingPackages } from '../../atoms/helpers/shipping-packages.hel
 import { validateDeliveryAddress } from './address-validation.service.js';
 import { recordWebShipmentLabel, recordWebShipmentFailure } from './shipment.service.js';
 import { findOfferByIdentity, isOfferActive } from './offer.service.js';
-import { getCheckoutUser, CheckoutCustomer, markIncompletePayment, clearIncompletePayment } from './user.service.js';
+import { getCheckoutUser,CheckoutCustomer, markIncompletePayment, clearIncompletePayment, markHubspotCheckoutAttempt } from './user.service.js';
 import { issueWhatsappInviteToken, buildWhatsappInviteUrl } from './whatsapp-invite.service.js';
 import { applyPromotion, registerPromotionUse } from './promotion.service.js';
 import { buildEventTicketTitle, formatEventDateLabel, formatEventFormatLabel, sanitizeTicketLabel } from '../../atoms/helpers/event-ticket.helper.js';
@@ -425,6 +425,15 @@ export const createPaymentIntent = async (
   const guestAccountItems = normalizedItems.filter((i) => GUEST_ACCOUNT_TYPES.has(i.type));
   for (const item of guestAccountItems) {
     await markIncompletePayment(user, item.title);
+  }
+
+  // No se sube a HubSpot al instante: se anota el intento y el worker diario
+  // (hubspot-contact.service.ts) lo sube solo si pasado el plazo sigue sin comprar.
+  // Quien paga pasa a 'customer' en confirmPayment y nunca se sube como lead.
+  if (user && guestAccountItems.length) {
+    await markHubspotCheckoutAttempt(user, guestAccountItems.map((i) => i.title)).catch((err) =>
+      console.warn('[hubspot-contact] no se pudo anotar el intento de compra:', (err as Error).message),
+    );
   }
 
   // Un código del 100% (cortesías) deja el total en $0: no hay nada que

@@ -33,7 +33,18 @@ export const getTicketQr: RequestHandler = async (req, res) => {
   }
 };
 
-// POST /tickets/check-in { folio, t } | { code } (admin)
+// GET /tickets/check-in/events (admin | staff) — eventos con boletos, para el selector del escáner
+export const listCheckInEvents: RequestHandler = async (_req, res) => {
+  try {
+    success(res, await ticketService.listCheckInEvents());
+  } catch (err: any) {
+    serverError(res, err);
+  }
+};
+
+// POST /tickets/check-in { folio, t, eventKey } | { code, eventKey } (admin | staff)
+// eventKey fija el evento que se está escaneando: un boleto de otro evento se
+// rechaza (wrongEvent) sin registrar asistencia. Para staff es obligatorio.
 export const checkIn: RequestHandler = async (req, res) => {
   try {
     const body = req.body ?? {};
@@ -41,11 +52,16 @@ export const checkIn: RequestHandler = async (req, res) => {
     const folio = normalizeFolio(parsed?.folio ?? body.folio);
     const signature = signatureFrom(parsed?.signature ?? body.t);
     if (!folio) return badRequest(res, 'Falta el folio del boleto');
-    if (!FOLIO_PATTERN.test(folio)) return success(res, { result: 'invalid' });
 
     const admin = (req as any).user;
+    const isStaff = admin?.role === 'staff';
+    const eventKey = typeof body.eventKey === 'string' ? body.eventKey.trim() : '';
+    if (isStaff && !eventKey) return badRequest(res, 'Selecciona el evento que estás escaneando');
+    if (!FOLIO_PATTERN.test(folio)) return success(res, { result: 'invalid' });
+
     const adminLabel = admin?.name || admin?.email || String(admin?.id ?? admin?._id ?? 'admin');
-    success(res, await ticketService.checkInTicket(folio, signature, adminLabel));
+    const result = await ticketService.checkInTicket(folio, signature, adminLabel, eventKey);
+    success(res, isStaff && result.ticket ? { ...result, ticket: ticketService.redactTicketForStaff(result.ticket) } : result);
   } catch (err: any) {
     serverError(res, err);
   }
