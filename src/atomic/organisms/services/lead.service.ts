@@ -80,7 +80,7 @@ const HUBSPOT_SOURCE_LABELS: Record<string, string> = {
   newsletter: 'Newsletter',
   contact: 'Formulario de contacto',
 };
-const leadSourceDetail = (source: string, meta?: Record<string, unknown>): string => {
+export const leadSourceDetail = (source: string, meta?: Record<string, unknown>): string => {
   if (source === 'centro-recursos') {
     const title = typeof meta?.deliveredResource === 'string' ? meta.deliveredResource.trim() : '';
     return `Web · Descarga: ${title || 'Centro de recursos'}`.slice(0, 200);
