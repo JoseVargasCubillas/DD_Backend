@@ -129,6 +129,9 @@ export const env = {
     pollIntervalMs: Math.max(60, Number(process.env.HUBSPOT_POLL_INTERVAL_SEC) || 300) * 1000,
     // Propiedad del objeto Producto que indica Presencial/Online (opcional).
     modalityProperty: process.env.HUBSPOT_PRODUCT_MODALITY_PROPERTY ?? 'modalidad',
+    // Propiedad del NEGOCIO con los nombres de los acompañantes separados por coma
+    // (nombre interno en HubSpot). Cada nombre sale en un boleto distinto.
+    companionsProperty: process.env.HUBSPOT_DEAL_COMPANIONS_PROPERTY ?? 'acompanantes',
     // Corte inicial: no se procesan negocios modificados antes de esta fecha ISO.
     syncStart: process.env.HUBSPOT_SYNC_START ?? '',
     // Copia del boleto/recibo al asesor (propietario del negocio en HubSpot). Requiere el

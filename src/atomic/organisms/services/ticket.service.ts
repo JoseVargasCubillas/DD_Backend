@@ -187,6 +187,10 @@ interface TicketBatchInput {
   purchasedAt: Date | string;
   ticketType?: string;
   advisorName?: string;
+  // Nombre del asistente de cada asiento (índice 0 = asiento 1). Si falta o está
+  // vacío, el asiento usa el nombre del contacto (`attendee.name`). Todos los
+  // boletos conservan el correo del contacto.
+  seatNames?: string[];
 }
 
 // Crea un boleto por asiento y los agrega al Google Sheet de asistencia.
@@ -211,7 +215,7 @@ const issueTickets = async (input: TicketBatchInput): Promise<IEventTicketDocume
       eventTitle: input.eventTitle,
       eventDate: input.eventDate,
       eventFormat: input.eventFormat,
-      attendeeName: input.attendee.name,
+      attendeeName: input.seatNames?.[seat - 1]?.trim() || input.attendee.name,
       attendeeEmail: input.attendee.email,
       attendeePhone: input.attendee.phone,
       amount: input.amount,

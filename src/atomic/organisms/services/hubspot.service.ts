@@ -85,6 +85,28 @@ export const parseProductName = (raw: unknown): ParsedProductName | null => {
   return { date, name: name.trim(), tier };
 };
 
+// Nombre del asistente de cada boleto a partir de la propiedad "acompañantes" del
+// negocio (nombres separados por coma):
+//  - tantos nombres como boletos → todos son acompañantes, el contacto no asiste;
+//  - menos nombres que boletos   → el 1.º boleto es del contacto, luego los
+//    acompañantes y, si aún sobran, el nombre del contacto (como antes);
+//  - más nombres que boletos     → se usan los primeros y se avisa en el log.
+// Todos los boletos se mandan siempre al correo del contacto.
+export const buildSeatNames = (
+  contactName: string,
+  companionsRaw: unknown,
+  seatTotal: number,
+): { names: string[]; extra: number } => {
+  const companions = String(companionsRaw ?? '')
+    .split(/[,;\n]/)
+    .map((n) => n.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  if (companions.length === 0) return { names: [], extra: 0 };
+  const names = companions.length >= seatTotal ? companions : [contactName, ...companions];
+  while (names.length < seatTotal) names.push(contactName);
+  return { names: names.slice(0, seatTotal), extra: Math.max(0, companions.length - seatTotal) };
+};
+
 const looksOnline = (text: string): boolean =>
   /online|en l[ií]nea|virtual/i.test(text) && !/presencial|h[ií]brido/i.test(text);
 
@@ -408,7 +430,8 @@ const deliverEmail = async (record: IHubspotSyncDocument): Promise<boolean> => {
   if (tickets.length === 0 || !record.attendeeEmail || smtpPaused()) return false;
   try {
     await sendEventTicketsEmail({
-      name: tickets[0].attendeeName,
+      // Saludo al contacto (el primer boleto puede ser de un acompañante).
+      name: record.attendeeName || tickets[0].attendeeName,
       email: record.attendeeEmail,
       reference: formatTicketOrderRef(`hubspot:${record.dealId}`),
       tickets: await buildCards(tickets),
@@ -614,6 +637,16 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
       ? { advisorEmail: advisor.email, advisorName: advisor.name, advisorCopySentAt: null, advisorCopyAttempts: 0 }
       : {};
 
+  // Propiedad "acompañantes" del negocio (opcional): un nombre por boleto extra.
+  let companionsRaw = '';
+  try {
+    const dealData = await hs(`/crm/v3/objects/deals/${deal.id}?properties=${encodeURIComponent(env.hubspot.companionsProperty)}`);
+    companionsRaw = String(dealData.properties?.[env.hubspot.companionsProperty] ?? '');
+  } catch (err) {
+    // Sin la propiedad (404/400) o sin lectura: se emite con el nombre del contacto.
+    log(`negocio ${deal.id}: no se pudo leer "${env.hubspot.companionsProperty}" — ${(err as Error).message.slice(0, 120)}`);
+  }
+
   const markSkipped = async (c: (typeof candidates)[number], reason: string): Promise<void> => {
     summary.skipped += 1;
     log(`negocio ${deal.id} · "${c.props.name}" → omitido (${reason})`);
@@ -727,6 +760,8 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     if (dup) { await markSkipped(c, `ya tiene boleto ${dup.folio}`); continue; }
 
     const seatTotal = Math.max(1, Math.min(20, Number(c.props.quantity) || 1));
+    const seats = buildSeatNames(attendee.name, companionsRaw, seatTotal);
+    if (seats.extra > 0) log(`negocio ${deal.id}: hay ${seats.extra} acompañante(s) de más que boletos (${seatTotal}) — se ignoran los últimos`);
     summary.issued += 1;
     if (dryRun) {
       log(`[dry] negocio ${deal.id} · ${email} · ${parsed.name} ${parsed.date} · ${parsed.tier} × ${seatTotal}${advisor ? ` · copia → ${advisor.email}` : ''}`);
@@ -747,6 +782,7 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
       purchasedAt: deal.closedAt ?? new Date(deal.modifiedMs).toISOString(),
       ticketType: parsed.tier,
       advisorName: advisor && advisor.email !== email ? advisor.name : '',
+      ...(seats.names.length > 0 && { seatNames: seats.names }),
     });
     const issuedFields = {
       status: 'issued' as const,
