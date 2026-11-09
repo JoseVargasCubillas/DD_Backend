@@ -40,7 +40,10 @@ export const createPackage = async (input: Partial<IPackageDocument> & { name: s
 export const updatePackage = async (id: string, data: Partial<IPackageDocument>): Promise<IPackageDocument> => {
   const pkg = await Package.findById(id);
   if (!pkg) throw err('Paquete no encontrado', 404);
-  const allowed: (keyof IPackageDocument)[] = ['name', 'description', 'price', 'currency', 'courseIds', 'durationDays', 'expiresAt', 'isActive', 'isFeatured'];
+  const allowed: (keyof IPackageDocument)[] = [
+    'name', 'description', 'price', 'currency', 'courseIds', 'durationDays', 'expiresAt', 'isActive', 'isFeatured',
+    'tier', 'billingInterval', 'benefits',
+  ];
   for (const k of allowed) {
     if ((data as any)[k] === undefined) continue;
     (pkg as any)[k] = k === 'expiresAt' ? normalizeExpiresAt((data as any)[k]) : (data as any)[k];
@@ -90,6 +93,8 @@ export const assignPackageToUser = async (userId: string, packageId: string, dur
   for (const cid of pkg.courseIds ?? []) current.add(cid);
   user.enrolledCourses = Array.from(current);
   user.contactStatus = 'customer';
+  // Todos los miembros de la Academia reciben el mailing (salvo baja explícita).
+  if (user.marketingStatus !== 'unsubscribed') user.marketingStatus = 'subscribed';
   await user.save();
 
   const now = new Date();

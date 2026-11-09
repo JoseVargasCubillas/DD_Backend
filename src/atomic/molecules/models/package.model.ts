@@ -3,7 +3,7 @@ import { createSqlModel, SqlDocumentMethods } from './sql-model.js';
 export interface IPackageDocument extends SqlDocumentMethods<IPackageDocument> {
   name: string;
   slug: string;
-  // entrepreneur | business | master; vacío en paquetes legacy.
+  // entrepreneur | business | master | elite (manual, no público); vacío en paquetes legacy.
   tier?: string;
   description: string;
   price: number;
@@ -13,6 +13,8 @@ export interface IPackageDocument extends SqlDocumentMethods<IPackageDocument> {
   expiresAt?: Date | string | null;
   isActive: boolean;
   isFeatured: boolean;
+  billingInterval?: string;
+  benefits?: Record<string, unknown>;
   createdAt: Date | string;
   updatedAt: Date | string;
 }
