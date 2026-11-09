@@ -18,8 +18,38 @@ const getPackagePeriodEnd = (pkg: IPackageDocument, now: Date): Date => {
   return new Date(now.getTime() + accessDays * 86400000);
 };
 
+// Élite Privé: membresía vendida en eventos (no pública). Misma oferta que Business
+// con grupo de WhatsApp propio. Se garantiza su existencia al listar paquetes para
+// que aparezca siempre como opción al asignar suscripciones desde el admin.
+const ELITE_WHATSAPP_GROUP_URL = 'https://chat.whatsapp.com/JgoggooO4BzGvcU2jEMZl9';
+
+const ensureElitePackage = async (pkgs: IPackageDocument[]): Promise<IPackageDocument[]> => {
+  const hasElite = pkgs.some((p) => String(p.tier || '').toLowerCase() === 'elite' || p.slug === 'elite-prive');
+  if (hasElite) return pkgs;
+  const business = pkgs.find((p) => String(p.tier || '').toLowerCase() === 'business');
+  const benefits = {
+    ...((business?.benefits as Record<string, unknown>) ?? { allCourses: true, masterclassEveryTwoMonths: true }),
+    whatsappGroupAdvisors: { enabled: true, url: ELITE_WHATSAPP_GROUP_URL },
+  };
+  const elite = await Package.create({
+    name: 'Élite Privé',
+    slug: 'elite-prive',
+    tier: 'elite',
+    description: 'Mismos beneficios que Business con grupo de WhatsApp propio. Se vende en eventos presenciales; no aparece en la web y sólo se asigna manualmente.',
+    price: 7997,
+    currency: business?.currency ?? 'MXN',
+    courseIds: [...(business?.courseIds ?? [])],
+    durationDays: business?.durationDays ?? 365,
+    billingInterval: business?.billingInterval ?? 'year',
+    isActive: true,
+    isFeatured: false,
+    benefits,
+  } as Partial<IPackageDocument>);
+  return [...pkgs, elite];
+};
+
 export const listPackages = async (): Promise<IPackageDocument[]> => {
-  const pkgs = await Package.find({});
+  const pkgs = await ensureElitePackage(await Package.find({}));
   return pkgs.sort((a, b) => new Date(String(b.createdAt)).getTime() - new Date(String(a.createdAt)).getTime());
 };
 
