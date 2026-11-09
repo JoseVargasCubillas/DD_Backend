@@ -70,17 +70,53 @@ const resolveHubspot = async (invite: IEventGroupInviteDocument): Promise<Resolv
   };
 };
 
+const MONTHS_ES: Record<string, number> = {
+  enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7,
+  agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12,
+};
+
+// "Viernes 16 de octubre de 2026" -> "2026-10-16" (null si no se entiende).
+const isoFromLabel = (label: string): string | null => {
+  const m = String(label || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().match(/(\d{1,2}) de ([a-z]+) de (\d{4})/);
+  const month = m ? MONTHS_ES[m[2]] : undefined;
+  return m && month ? `${m[3]}-${String(month).padStart(2, '0')}-${m[1].padStart(2, '0')}` : null;
+};
+
 const resolveWeb = async (invite: IEventGroupInviteDocument): Promise<Resolved | null> => {
   const [, orderId, idx] = invite.ref.split(':');
   const order = await Order.findById(orderId).then((o) => o, () => null);
   const item = order?.items?.[Number(idx)];
   if (!order || !item) return null;
   const event = item.eventId ? await Event.findById(item.eventId).then((e) => e, () => null) : null;
+  if (event) {
+    return {
+      eventRefId: String(event._id),
+      eventSlug: event.slug,
+      eventTitle: event.title,
+      eventDate: item.eventDate || formatEventDateLabel(event.startDate, event.endDate),
+      amount: Number(item.price) || 0,
+      advisorName: '',
+    };
+  }
+  // Compras sin eventId (catálogo): se busca el evento online del mismo día y grupo,
+  // igual que con HubSpot, para que no queden en una lista aparte con título largo.
+  const iso = isoFromLabel(item.eventDate || '');
+  const found = iso ? await findGroupEvent(item.title, iso, invite.groupKey as GroupKey) : null;
+  if (found?.source === 'db') {
+    return {
+      eventRefId: found.refId,
+      eventSlug: found.slug,
+      eventTitle: found.title,
+      eventDate: item.eventDate || formatEventDateLabel(found.startDate, found.endDate),
+      amount: Number(item.price) || 0,
+      advisorName: '',
+    };
+  }
   return {
-    eventRefId: event ? String(event._id) : String(item.refId || ''),
-    eventSlug: event?.slug || String(item.refId || ''),
-    eventTitle: event?.title || item.title,
-    eventDate: item.eventDate || (event ? formatEventDateLabel(event.startDate, event.endDate) : ''),
+    eventRefId: String(item.refId || ''),
+    eventSlug: String(item.refId || ''),
+    eventTitle: item.title,
+    eventDate: item.eventDate || '',
     amount: Number(item.price) || 0,
     advisorName: '',
   };
