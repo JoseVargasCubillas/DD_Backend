@@ -10,7 +10,14 @@
  *
  * Uso:
  *   npm run tickets:backfill-online            → solo muestra qué haría
- *   npm run tickets:backfill-online -- --apply → lo escribe (≈2 s por fila por el límite de Sheets)
+ *   npm run tickets:backfill-online -- --apply → lo escribe, con pausas por el límite de Sheets
+ *
+ * Reparación (si una corrida anterior dejó inscritos en el evento equivocado o
+ * filas sin escribir en el Sheet):
+ *   npm run tickets:backfill-online -- --reset          → muestra qué borraría y volvería a crear
+ *   npm run tickets:backfill-online -- --reset --apply  → borra los inscritos online que salieron de
+ *     una invitación (y limpia su fila del Sheet) y los vuelve a crear bien en la misma corrida.
+ *     Los inscritos online no tienen check-in, así que no se pierde asistencia.
  */
 
 import '../config/load-env.js';
@@ -20,12 +27,20 @@ import { EventTicket } from '../atomic/molecules/models/event-ticket.model.js';
 import { HubspotSync } from '../atomic/molecules/models/hubspot-sync.model.js';
 import { Order } from '../atomic/molecules/models/order.model.js';
 import { Event } from '../atomic/molecules/models/event.model.js';
-import { findEvent, parseProductName } from '../atomic/organisms/services/hubspot.service.js';
+import { findGroupEvent, parseProductName } from '../atomic/organisms/services/hubspot.service.js';
+import { clearTicketRow, isAttendanceSheetEnabled, syncTicketRow } from '../atomic/organisms/services/attendance-sheet.service.js';
 import { registerOnlineAttendee } from '../atomic/organisms/services/ticket.service.js';
 import { groupLabel, GroupKey } from '../atomic/organisms/services/event-group.service.js';
 import { formatEventDateLabel } from '../atomic/atoms/helpers/event-ticket.helper.js';
 
 const apply = process.argv.includes('--apply');
+const reset = process.argv.includes('--reset');
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+const isQuota = (err: unknown): boolean => /quota exceeded|rate limit|429/i.test(String((err as Error)?.message ?? err));
+// Pausa entre filas: Google Sheets deja ~60 escrituras por minuto por usuario.
+const SHEET_PACE_MS = 4000;
+const QUOTA_WAIT_MS = 65_000;
 
 interface Resolved {
   eventRefId: string;
@@ -41,7 +56,9 @@ const resolveHubspot = async (invite: IEventGroupInviteDocument): Promise<Resolv
   const record = await HubspotSync.findOne({ kind: 'item', dealId, lineItemId });
   if (!record) return null;
   const parsed = parseProductName(record.productName);
-  const event = parsed ? await findEvent(parsed.name, parsed.date) : null;
+  // Mismo criterio que la emisión: si el nombre del producto no coincide con el
+  // título, se busca el evento online del mismo día y grupo.
+  const event = parsed ? await findGroupEvent(parsed.name, parsed.date, invite.groupKey as GroupKey) : null;
   const fallback = parsed ? `${invite.groupKey}-${parsed.date}` : invite.groupKey;
   return {
     eventRefId: event?.refId ?? fallback,
@@ -71,12 +88,39 @@ const resolveWeb = async (invite: IEventGroupInviteDocument): Promise<Resolved |
 
 const main = async () => {
   await connectDB();
-  const stats = { invites: 0, alreadyListed: 0, created: 0, noSource: 0, failed: 0 };
+  const stats = { invites: 0, alreadyListed: 0, duplicates: 0, created: 0, noSource: 0, failed: 0 };
+  // Una persona por evento: si compró dos veces (o se reprocesó el negocio) hay
+  // varias invitaciones del mismo correo, pero en la lista va una sola vez.
+  const inviteRefs = new Set((await EventGroupInvite.find({})).map((i) => i.ref));
+  // Con --reset: inscritos online que salieron de una invitación y se rehacen.
+  const resetRefs = new Set<string>();
+  if (reset) {
+    for (const t of await EventTicket.find({})) {
+      if (t.accessType !== 'online' || !inviteRefs.has(t.orderId)) continue;
+      resetRefs.add(t.orderId);
+      console.log(`${apply ? '- borra' : '[dry] borraría'} ${t.attendeeName} <${t.attendeeEmail}> · ${t.eventTitle} · ${t.eventDate}`);
+      if (!apply) continue;
+      try {
+        if (t.sheetTab && t.sheetRow) { await clearTicketRow(t.sheetTab, t.sheetRow); await sleep(SHEET_PACE_MS); }
+      } catch (err) {
+        console.log(`  ! no se pudo limpiar la fila del Sheet de ${t.folio}: ${(err as Error).message.slice(0, 120)}`);
+      }
+      await EventTicket.findByIdAndDelete(String(t._id));
+    }
+    console.log(`reset: ${resetRefs.size} inscritos online ${apply ? 'borrados' : 'por borrar'}`);
+  }
+  const listed = new Set<string>();
+  for (const t of await EventTicket.find({})) {
+    if (t.accessType !== 'online' || resetRefs.has(t.orderId)) continue;
+    const email = (t.attendeeEmail || '').trim().toLowerCase();
+    listed.add(`${email}|${t.eventRefId}`);
+    listed.add(`${email}|${t.eventSlug}`);
+  }
   try {
     const invites = await EventGroupInvite.find({}).sort({ createdAt: 1 });
     stats.invites = invites.length;
     for (const invite of invites) {
-      if (await EventTicket.findOne({ orderId: invite.ref })) { stats.alreadyListed += 1; continue; }
+      if (!resetRefs.has(invite.ref) && await EventTicket.findOne({ orderId: invite.ref })) { stats.alreadyListed += 1; continue; }
       const data = invite.ref.startsWith('hubspot:') ? await resolveHubspot(invite)
         : invite.ref.startsWith('web:') ? await resolveWeb(invite) : null;
       if (!data) {
@@ -84,10 +128,18 @@ const main = async () => {
         console.log(`· sin venta de origen: ${invite.ref} (${invite.email})`);
         continue;
       }
+      const email = invite.email.trim().toLowerCase();
+      if (listed.has(`${email}|${data.eventRefId}`) || listed.has(`${email}|${data.eventSlug}`)) {
+        stats.duplicates += 1;
+        console.log(`= ya está en ese evento: ${invite.email} · ${data.eventTitle} · ${data.eventDate}`);
+        continue;
+      }
+      listed.add(`${email}|${data.eventRefId}`);
+      listed.add(`${email}|${data.eventSlug}`);
       console.log(`${apply ? '+' : '[dry]'} ${invite.name} <${invite.email}> · ${data.eventTitle} · ${data.eventDate}${data.advisorName ? ` · ${data.advisorName}` : ''}`);
       if (!apply) { stats.created += 1; continue; }
       try {
-        await registerOnlineAttendee({
+        const ticket = await registerOnlineAttendee({
           ref: invite.ref,
           eventRefId: data.eventRefId,
           eventSlug: data.eventSlug,
@@ -99,6 +151,21 @@ const main = async () => {
           purchasedAt: invite.createdAt,
         });
         stats.created += 1;
+        if (isAttendanceSheetEnabled()) {
+          // Si el Sheet rechazó la fila por límite de cuota, se espera y se reintenta.
+          for (let attempt = 1; !ticket.sheetRow && attempt <= 3; attempt += 1) {
+            console.log(`  … fila del Sheet pendiente (${ticket.folio}), reintento ${attempt}/3 en ${QUOTA_WAIT_MS / 1000} s`);
+            await sleep(QUOTA_WAIT_MS);
+            try {
+              const res = await syncTicketRow(ticket);
+              if (res) { ticket.sheetTab = res.tab; ticket.sheetRow = res.row; await ticket.save(); }
+            } catch (err) {
+              if (!isQuota(err)) { console.log(`  ✖ Sheet ${ticket.folio}: ${(err as Error).message.slice(0, 120)}`); break; }
+            }
+          }
+          if (!ticket.sheetRow) { stats.failed += 1; console.log(`  ✖ ${ticket.folio} quedó en la lista pero sin fila en el Sheet`); }
+          await sleep(SHEET_PACE_MS);
+        }
       } catch (err) {
         stats.failed += 1;
         console.log(`  ✖ ${invite.ref}: ${(err as Error).message}`);
