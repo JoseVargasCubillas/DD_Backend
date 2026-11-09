@@ -265,6 +265,12 @@ const sendReceiptIfEventOrder = async (order: IOrderDocument): Promise<void> => 
           email: recipient.email,
           name: recipient.name,
           groupUrl: boughtEvent?.whatsappGroupUrl,
+          strict: true,
+          eventRefId: boughtEvent ? String(boughtEvent._id) : String(item.refId || ''),
+          eventSlug: boughtEvent?.slug || String(item.refId || ''),
+          eventTitle: boughtEvent?.title || item.title,
+          eventDate: item.eventDate || (boughtEvent ? formatEventDateLabel(boughtEvent.startDate, boughtEvent.endDate) : ''),
+          amount: Number(item.price) || 0,
         });
         if (card) groups.push(card);
       }
@@ -681,7 +687,11 @@ export const getAllOrders = async (): Promise<IOrderDocument[]> =>
 export const deleteOrder = async (orderId: string): Promise<IOrderDocument | null> => {
   const order = await Order.findById(orderId);
   if (!order) return null;
-  const tickets = await EventTicket.find({ orderId });
+  const tickets = [
+    ...(await EventTicket.find({ orderId })),
+    // Inscritos online (Holding / SEF Online): su orderId es "web:<orden>:<item>".
+    ...(await EventTicket.find({})).filter((t) => t.orderId.startsWith(`web:${orderId}:`)),
+  ];
   await Promise.all(tickets.map((t) => EventTicket.findByIdAndDelete(String(t._id))));
   await Order.findByIdAndDelete(orderId);
   return order;

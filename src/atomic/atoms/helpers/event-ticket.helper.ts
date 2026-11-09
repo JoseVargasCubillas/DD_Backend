@@ -11,9 +11,11 @@ const MAX_LABEL_LENGTH = 80;
 export const isHubspotOrderId = (orderId: string): boolean => /^hubspot:/i.test(String(orderId || ''));
 
 export const formatTicketOrderRef = (orderId: string): string => {
-  const id = String(orderId || '');
+  let id = String(orderId || '');
   const hubspot = id.match(/^hubspot:(\d+)/i);
   if (hubspot) return `HP-${hubspot[1]}`;
+  // Inscritos online: "web:<orderId>:<item>".
+  id = id.replace(/^web:([^:]+):.*$/i, '$1');
   const tail = id.replace(/[^a-z0-9]/gi, '').slice(-8).toUpperCase();
   return tail ? `WB-${tail}` : '';
 };

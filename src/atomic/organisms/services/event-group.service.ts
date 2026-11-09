@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import QRCode from 'qrcode';
 import { env } from '../../../config/env.js';
 import { EventGroupInvite } from '../../molecules/models/event-group-invite.model.js';
+import { registerOnlineAttendee } from './ticket.service.js';
 
 export type GroupKey = 'holding' | 'sef-online';
 
@@ -48,14 +49,18 @@ const GROUP_URL_RE = /^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]+\/?(\?.*)?$/
 // Enlace real del grupo (nunca se manda por correo). Cada edición tiene el suyo
 // en el campo "Grupo de WhatsApp" del evento (admin → Eventos); sin él, el del
 // .env como respaldo. Null si tampoco existe.
-export const resolveGroupUrl = (key: GroupKey, eventGroupUrl?: string | null): string | null => {
+// `strict`: sin enlace propio de la edición NO se usa el del .env. El .env guarda
+// el grupo de una edición vieja; con strict, una edición nueva sin grupo queda
+// pendiente en vez de mandar a los compradores al grupo equivocado.
+export const resolveGroupUrl = (key: GroupKey, eventGroupUrl?: string | null, strict = false): string | null => {
   const own = String(eventGroupUrl ?? '').trim();
   if (GROUP_URL_RE.test(own)) return own;
+  if (strict) return null;
   return GROUPS[key].url().trim() || null;
 };
 
-export const isGroupConfigured = (key: GroupKey, eventGroupUrl?: string | null): boolean =>
-  Boolean(resolveGroupUrl(key, eventGroupUrl));
+export const isGroupConfigured = (key: GroupKey, eventGroupUrl?: string | null, strict = false): boolean =>
+  Boolean(resolveGroupUrl(key, eventGroupUrl, strict));
 
 export const buildGroupJoinUrl = (token: string): string =>
   `${env.serverUrl.replace(/\/$/, '')}/api/v1/event-groups/${token}`;
@@ -76,12 +81,21 @@ export const issueGroupInvite = async (input: {
   name: string;
   // Enlace del grupo de la edición comprada (campo del evento); sin él, el del .env.
   groupUrl?: string | null;
+  // true: exige el enlace propio de la edición (sin respaldo del .env).
+  strict?: boolean;
+  // Evento y venta: con ellos el inscrito entra a la lista de asistentes del evento.
+  eventRefId?: string;
+  eventSlug?: string;
+  eventTitle?: string;
+  eventDate?: string;
+  amount?: number;
+  advisorName?: string;
 }): Promise<GroupInviteCard | null> => {
   let invite = await EventGroupInvite.findOne({ ref: input.ref });
   if (!invite) {
     // El enlace de la edición se fija al emitir: si el admin cambia o agrega
     // grupos después, quien ya compró conserva el suyo.
-    const groupUrl = resolveGroupUrl(input.key, input.groupUrl);
+    const groupUrl = resolveGroupUrl(input.key, input.groupUrl, input.strict);
     if (!groupUrl) return null;
     invite = await EventGroupInvite.create({
       ref: input.ref,
@@ -92,6 +106,24 @@ export const issueGroupInvite = async (input: {
       name: input.name,
       usedAt: null,
     });
+  }
+  // Lista de asistentes del evento (misma tabla que los boletos). No debe romper
+  // la compra ni el correo: si falla, la invitación sale igual.
+  if (input.eventTitle) {
+    try {
+      await registerOnlineAttendee({
+        ref: input.ref,
+        eventRefId: input.eventRefId ?? '',
+        eventSlug: input.eventSlug ?? '',
+        eventTitle: input.eventTitle,
+        eventDate: input.eventDate ?? '',
+        attendee: { name: input.name, email: invite.email },
+        amount: input.amount ?? 0,
+        advisorName: input.advisorName,
+      });
+    } catch (err) {
+      console.warn('[event-group] no se pudo registrar al inscrito online:', (err as Error).message);
+    }
   }
   return cardFromToken(invite.token, input.key);
 };

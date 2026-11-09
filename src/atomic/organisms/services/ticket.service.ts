@@ -38,6 +38,8 @@ export interface PublicTicket {
 }
 
 export interface AdminTicket extends PublicTicket {
+  // 'online' = inscrito a Holding / SEF Online (sin QR ni check-in).
+  accessType: 'ticket' | 'online';
   attendeeEmail: string;
   attendeePhone: string;
   orderId: string;
@@ -87,6 +89,7 @@ export const toAdminTicket = (t: IEventTicketDocument): AdminTicket => ({
   checkedInBy: t.checkedInBy,
   source: isHubspotOrderId(t.orderId) ? 'hubspot' : 'web',
   advisorName: t.advisorName ?? '',
+  accessType: t.accessType === 'online' ? 'online' : 'ticket',
 });
 
 const syncSheetBestEffort = async (ticket: IEventTicketDocument, mode: 'append' | 'update'): Promise<void> => {
@@ -191,6 +194,7 @@ interface TicketBatchInput {
   // vacío, el asiento usa el nombre del contacto (`attendee.name`). Todos los
   // boletos conservan el correo del contacto.
   seatNames?: string[];
+  accessType?: 'ticket' | 'online';
 }
 
 // Crea un boleto por asiento y los agrega al Google Sheet de asistencia.
@@ -225,6 +229,7 @@ const issueTickets = async (input: TicketBatchInput): Promise<IEventTicketDocume
       sheetTab,
       ...(input.ticketType && { ticketType: input.ticketType }),
       ...(input.advisorName && { advisorName: input.advisorName }),
+      ...(input.accessType === 'online' && { accessType: 'online' as const }),
     });
     await syncSheetBestEffort(ticket, 'append');
     created.push(ticket);
@@ -284,6 +289,43 @@ export const createTicketsForExternalSale = (input: Omit<TicketBatchInput, 'orde
 
 // ¿Esta persona ya tiene boleto vigente para este evento (p. ej. compró en la
 // página y además el asesor cerró el negocio)? Evita mandar dos QR.
+// Inscrito a un evento online (Holding / SEF Online): un registro en la misma
+// tabla de asistentes, sin QR ni correo de boleto. Idempotente por `ref`
+// ("web:<orderId>:<item>" / "hubspot:<dealId>:<lineItemId>").
+export const registerOnlineAttendee = async (input: {
+  ref: string;
+  eventRefId: string;
+  eventSlug: string;
+  eventTitle: string;
+  eventDate: string;
+  eventFormat?: string;
+  attendee: { name: string; email: string; phone?: string };
+  amount: number;
+  advisorName?: string;
+  // Fecha de la compra original (para registros cargados después de la venta).
+  purchasedAt?: Date | string;
+}): Promise<IEventTicketDocument> => {
+  const existing = await EventTicket.findOne({ orderId: input.ref });
+  if (existing) return existing;
+  const [ticket] = await issueTickets({
+    orderId: input.ref,
+    orderItemIndex: 0,
+    seatTotal: 1,
+    eventRefId: input.eventRefId,
+    eventSlug: input.eventSlug,
+    eventTitle: input.eventTitle,
+    eventDate: input.eventDate,
+    eventFormat: input.eventFormat || 'Online',
+    attendee: { name: input.attendee.name, email: input.attendee.email, phone: input.attendee.phone ?? '' },
+    amount: input.amount,
+    currency: 'MXN',
+    purchasedAt: input.purchasedAt ?? new Date().toISOString(),
+    advisorName: input.advisorName,
+    accessType: 'online',
+  });
+  return ticket;
+};
+
 export const findActiveTicketForEvent = async (
   email: string,
   eventKeys: string[],
@@ -293,6 +335,7 @@ export const findActiveTicketForEvent = async (
   const all = await EventTicket.find({});
   return all.find((t) =>
     t.status !== TICKET_STATUS.VOID
+    && t.accessType !== 'online'
     && (t.attendeeEmail || '').trim().toLowerCase() === target
     && (wanted.has(t.eventRefId) || wanted.has(t.eventSlug))) ?? null;
 };
@@ -393,7 +436,7 @@ export const listCheckInEvents = async (): Promise<CheckInEventOption[]> => {
   // Títulos cortos primero: el corto ("Taller de estrategia fiscal") queda como
   // canónico y los largos ("… · General · Monterrey") se unen a su misma edición.
   const all = (await EventTicket.find({}))
-    .filter((t) => t.status !== TICKET_STATUS.VOID)
+    .filter((t) => t.status !== TICKET_STATUS.VOID && t.accessType !== 'online')
     .sort((a, b) => normText(a.eventTitle).length - normText(b.eventTitle).length);
   const groups = new Map<string, { sample: IEventTicketDocument; total: number; checkedIn: number }>();
   for (const t of all) {
@@ -455,6 +498,8 @@ export const checkInTicket = async (
 ): Promise<{ result: CheckInResult; ticket?: AdminTicket }> => {
   const ticket = await findTicketByFolio(rawFolio);
   if (!ticket) return { result: 'invalid' };
+  // Los inscritos online no tienen QR ni check-in.
+  if (ticket.accessType === 'online') return { result: 'invalid' };
   // Con firma se valida; sin firma (folio dictado a mano) se acepta porque el
   // endpoint ya exige sesión de administrador o staff.
   if (signature && !verifyFolioSignature(ticket.folio, signature)) return { result: 'invalid' };

@@ -254,6 +254,26 @@ export const findEvent = async (name: string, date: string): Promise<ResolvedEve
   return null;
 };
 
+// Evento de un producto con grupo de WhatsApp. Primero por nombre + día; si el
+// nombre del producto en HubSpot no se parece al título del evento ("Seminario
+// Estrategia Fiscal Online" vs "Taller de estrategia fiscal"), se busca el evento
+// de la DB del mismo día que sea del mismo grupo (SEF Online / Holding).
+export const findGroupEvent = async (name: string, date: string, groupKey: GroupKey): Promise<ResolvedEvent | null> => {
+  const byName = await findEvent(name, date);
+  if (byName?.source === 'db') return byName;
+  const sameDay = (await Event.find({})).filter(
+    (e) => mxDay(e.startDate) === date && e.modality === 'online' && detectGroupProduct(e.title, e.slug, 'online') === groupKey,
+  );
+  if (sameDay.length === 1) {
+    const db = sameDay[0];
+    return {
+      refId: String(db._id), slug: db.slug, title: db.title, startDate: db.startDate, endDate: db.endDate,
+      location: db.location, modality: db.modality, source: 'db', groupUrl: db.whatsappGroupUrl,
+    };
+  }
+  return byName;
+};
+
 // ---------------------------------------------------------------------------
 // Procesamiento
 // ---------------------------------------------------------------------------
@@ -464,9 +484,13 @@ const applyAdvisorToTickets = async (record: IHubspotSyncDocument): Promise<numb
   const name = record.advisorName || record.advisorEmail || '';
   if (!name) return 0;
   let updated = 0;
-  for (const folio of record.folios ?? []) {
-    const t = await EventTicket.findOne({ folio });
+  // Boletos presenciales (por folio) o, en Holding / SEF Online, el inscrito online.
+  const targets: Array<IEventTicketDocument | null> = [];
+  for (const folio of record.folios ?? []) targets.push(await EventTicket.findOne({ folio }));
+  if (record.groupKey) targets.push(await EventTicket.findOne({ orderId: `hubspot:${record.dealId}:${record.lineItemId}` }));
+  for (const t of targets) {
     if (!t || t.advisorName === name) continue;
+    const folio = t.folio;
     t.advisorName = name;
     await t.save();
     updated += 1;
@@ -670,8 +694,8 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     // salen solos cuando se configure.
     const groupKey = detectGroupProduct(parsed.name, parsed.tier === 'Online' ? 'online' : '');
     if (groupKey) {
-      const groupEvent = await findEvent(parsed.name, parsed.date);
-      if (!isGroupConfigured(groupKey, groupEvent?.groupUrl)) {
+      const groupEvent = await findGroupEvent(parsed.name, parsed.date, groupKey);
+      if (!isGroupConfigured(groupKey, groupEvent?.groupUrl, true)) {
         summary.pendingEvent += 1;
         if (!c.pending) {
           log(`negocio ${deal.id} · "${c.props.name}" → PENDIENTE: falta el enlace del grupo de WhatsApp de ${groupLabel(groupKey)} del ${parsed.date} (admin → Eventos → campo "Grupo de WhatsApp"; el evento debe existir en la DB)`);
@@ -690,12 +714,21 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
         log(`[dry] negocio ${deal.id} · ${email} · ${groupLabel(groupKey)} → invitación al grupo de WhatsApp${advisor ? ` · copia → ${advisor.email}` : ''}`);
         continue;
       }
-      const card = await issueGroupInvite({ ref: `hubspot:${deal.id}:${c.id}`, key: groupKey, email, name: attendee.name, groupUrl: groupEvent?.groupUrl });
-      if (!card) continue;
-      // Datos para el resumen de compra del correo (igual que el recibo de la web).
+      // Datos para el resumen de compra del correo (igual que el recibo de la web)
+      // y para la lista de inscritos.
       const eventDateLabel = groupEvent
         ? formatEventDateLabel(groupEvent.startDate, groupEvent.endDate)
         : formatEventDateLabel(new Date(`${parsed.date}T12:00:00-06:00`));
+      const groupMeta = {
+        eventRefId: groupEvent?.refId ?? `${groupKey}-${parsed.date}`,
+        eventSlug: groupEvent?.slug ?? `${groupKey}-${parsed.date}`,
+        eventTitle: groupEvent?.title || groupLabel(groupKey),
+        eventDate: eventDateLabel,
+        amount: Number(c.props.price) || 0,
+        advisorName: advisor && advisor.email !== email ? advisor.name : '',
+      };
+      const card = await issueGroupInvite({ ref: `hubspot:${deal.id}:${c.id}`, key: groupKey, email, name: attendee.name, groupUrl: groupEvent?.groupUrl, strict: true, ...groupMeta });
+      if (!card) continue;
       const fields = {
         status: 'issued' as const,
         reason: '',

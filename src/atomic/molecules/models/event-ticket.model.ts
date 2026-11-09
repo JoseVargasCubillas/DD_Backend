@@ -41,6 +41,9 @@ export interface IEventTicketDocument extends SqlDocumentMethods<IEventTicketDoc
   ticketType?: string;
   // Asesor (propietario del negocio en HubSpot) cuando la venta la cerró un asesor.
   advisorName?: string;
+  // 'ticket' (default): boleto presencial con QR y check-in.
+  // 'online': inscrito a Holding / SEF Online — solo lista, sin QR ni correo de boleto.
+  accessType?: 'ticket' | 'online';
   createdAt: Date | string;
   updatedAt: Date | string;
 }

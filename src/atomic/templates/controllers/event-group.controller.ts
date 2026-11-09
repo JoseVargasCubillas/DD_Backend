@@ -31,6 +31,9 @@ const HELP = 'escribe a <a href="mailto:servicios@diegodiaz.mx">servicios@diegod
 
 // GET /event-groups/:token (público) — el enlace del correo / QR
 export const joinEventGroup: RequestHandler = async (req, res) => {
+  // Enlace de un solo uso: nada de caché en navegador/CDN, o la redirección se
+  // repite sin pasar por el servidor y el enlace parece reutilizable.
+  res.set('Cache-Control', 'no-store');
   try {
     const result = await redeemGroupInvite(String(req.params.token || ''));
 

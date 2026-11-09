@@ -20,6 +20,8 @@
         "hubspot:backfill-attempts": "tsx src/scripts/hubspot-backfill-attempts.ts",
         "tickets:backfill-advisor": "tsx src/scripts/backfill-ticket-advisors.ts",
         "tickets:merge-edition": "tsx src/scripts/merge-event-tickets.ts",
+        "tickets:backfill-online": "tsx src/scripts/backfill-online-attendees.ts",
+        "tickets:fix-group-invites": "tsx src/scripts/fix-group-invites.ts",
         "catalog:gen": "tsx src/scripts/gen-event-catalog.ts"
     },
     "dependencies": {
