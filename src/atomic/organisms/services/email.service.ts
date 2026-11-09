@@ -972,6 +972,55 @@ export const sendAcademiaOrderReceipt = (input: {
     }),
   );
 
+// Acceso otorgado desde el admin (venta en evento, cortesía, migración): confirma
+// la membresía, su vigencia y, si el paquete lo incluye, el grupo de WhatsApp.
+// Las credenciales de la cuenta viajan aparte (sendCredentials) cuando es alta nueva.
+export const sendAcademiaManualAccess = (input: {
+  customerName: string;
+  customerEmail: string;
+  planName: string;
+  accessUntil: Date;
+  isRenewal?: boolean;
+  whatsappJoinUrl?: string;
+}): Promise<unknown> =>
+  send(
+    input.customerEmail,
+    input.isRenewal ? 'Tu acceso a Academia se renovó - Academia Diego Díaz' : 'Tu acceso a la Academia está activo - Academia Diego Díaz',
+    emailShell({
+      eyebrow: input.isRenewal ? 'Renovación confirmada' : 'Membresía activada',
+      badge: 'Activo',
+      title: input.isRenewal ? `Tu acceso<br/>se ${accent('renovó.')}` : `Tu acceso<br/>está ${accent('activo.')}`,
+      lead: input.isRenewal
+        ? `Hola ${input.customerName}, renovamos tu acceso a Academia Diego Díaz.`
+        : `Hola ${input.customerName}, bienvenido a Academia Diego Díaz. Tu membresía ${input.planName} ya está activa.`,
+      content: `
+      ${confirmationPanel({
+        label: input.isRenewal ? 'Renovación confirmada' : 'Acceso confirmado',
+        tag: 'Academia+ · membresía',
+        value: accent(input.planName),
+        description: `Tu acceso queda activo hasta el ${formatDateEs(input.accessUntil)}. Entra con tu correo y la contraseña que te enviamos por separado.`,
+        rows: [
+          ['Plan', input.planName],
+          ['Correo', input.customerEmail],
+          ['Acceso vigente hasta', formatDateEs(input.accessUntil)],
+        ],
+      })}
+      ${input.whatsappJoinUrl
+        ? `<div style="margin-top:22px;padding:20px 22px;border:1px solid #25D366;background:#f0fbf4;">
+            <p style="margin:0 0 12px;font-size:13px;font-weight:700;color:#17130f;">Tu plan incluye grupo de WhatsApp</p>
+            <p style="margin:0 0 14px;font-size:13px;line-height:1.6;color:#5f574f;">Este enlace es de un solo uso y personal — no lo compartas, deja de funcionar en cuanto entras al grupo.</p>
+            ${linkButton({ label: 'Unirme al grupo de WhatsApp', url: input.whatsappJoinUrl, dark: false })}
+          </div>`
+        : ''}
+    `,
+      ctaLabel: 'Entrar a Academia',
+      ctaUrl: `${env.clientUrl}/academia`,
+      preheader: input.isRenewal
+        ? `Tu acceso a Academia ${input.planName} se renovó.`
+        : `Tu membresía ${input.planName} de Academia ya está activa.`,
+    }),
+  );
+
 // Recordatorio antes del vencimiento — mismo texto para la ventana de 7 dias
 // y la de 1 dia/dia-de, solo cambia la urgencia del copy segun daysLeft.
 export const sendAcademiaRenewalReminder = (input: {

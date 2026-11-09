@@ -2,6 +2,8 @@ import slugify from 'slugify';
 import { Package, IPackageDocument } from '../../molecules/models/package.model.js';
 import { User } from '../../molecules/models/user.model.js';
 import { Subscription } from '../../molecules/models/subscription.model.js';
+import { sendAcademiaManualAccess } from './email.service.js';
+import { issueWhatsappInviteTokenForPackage, buildWhatsappInviteUrl } from './whatsapp-invite.service.js';
 
 const err = (m: string, c: number): Error => Object.assign(new Error(m), { statusCode: c });
 
@@ -143,12 +145,18 @@ export const assignPackageToUser = async (userId: string, packageId: string, dur
     status: 'active',
   });
 
+  // Token nuevo en cada asignación/renovación (paquetes con grupo de WhatsApp):
+  // invalida cualquier enlace viejo que el cliente no haya usado todavía.
+  const whatsappInviteToken = issueWhatsappInviteTokenForPackage(pkg);
+
   let sub;
   if (existing) {
     existing.currentPeriodStart = now.toISOString() as any;
     existing.currentPeriodEnd = periodEnd.toISOString() as any;
     existing.cancelAtPeriodEnd = false;
     existing.plan = pkg.slug as any;
+    existing.whatsappInviteToken = whatsappInviteToken;
+    existing.whatsappInviteUsedAt = null;
     sub = await existing.save();
   } else {
     sub = await Subscription.create({
@@ -159,7 +167,26 @@ export const assignPackageToUser = async (userId: string, packageId: string, dur
       currentPeriodStart: now.toISOString(),
       currentPeriodEnd: periodEnd.toISOString(),
       cancelAtPeriodEnd: false,
+      whatsappInviteToken,
+      whatsappInviteUsedAt: null,
     } as any);
+  }
+
+  // Correo de confirmación con vigencia y, si aplica, el enlace al grupo de
+  // WhatsApp. No bloquea la asignación si el SMTP falla.
+  if (user.email) {
+    try {
+      await sendAcademiaManualAccess({
+        customerName: user.name || 'Cliente',
+        customerEmail: user.email,
+        planName: pkg.name,
+        accessUntil: periodEnd,
+        isRenewal: Boolean(existing),
+        whatsappJoinUrl: whatsappInviteToken ? buildWhatsappInviteUrl(whatsappInviteToken) : undefined,
+      });
+    } catch (mailErr) {
+      console.warn(`[assignPackageToUser] correo de acceso falló para ${user.email}:`, (mailErr as Error).message);
+    }
   }
 
   return { user, package: pkg, subscription: sub };
