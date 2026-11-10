@@ -24,7 +24,7 @@ export interface IEventDocument extends SqlDocumentMethods<IEventDocument> {
   isFeatured: boolean;
   // Atender sólo por WhatsApp (sin landing). Sin definir = regla por defecto del frontend.
   whatsappOnly?: boolean;
-  // Grupo de WhatsApp de esta edición (eventos online con grupo: Holding / SEF Online).
+  // Grupo de WhatsApp de esta edición (cualquier evento online con grupo).
   whatsappGroupUrl?: string;
   agenda: { time: string; topic: string; speaker: string }[];
   createdAt: Date | string;

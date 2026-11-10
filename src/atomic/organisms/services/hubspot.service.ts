@@ -38,7 +38,9 @@ import {
 } from './ticket.service.js';
 import { isAttendanceSheetEnabled, syncTicketRow } from './attendance-sheet.service.js';
 import { sendEventTicketsEmail, sendEventGroupEmail } from './email.service.js';
-import { detectGroupProduct, groupLabel, isGroupConfigured, issueGroupInvite, cardFromToken, GroupKey } from './event-group.service.js';
+import {
+  detectGroupProduct, eventGroupKey, groupLabel, isGroupConfigured, issueGroupInvite, cardFromToken, nameOverlap, GroupKey,
+} from './event-group.service.js';
 
 const API = 'https://api.hubapi.com';
 const OVERLAP_MS = 2 * 60 * 1000;
@@ -274,6 +276,52 @@ export const findGroupEvent = async (name: string, date: string, groupKey: Group
   return byName;
 };
 
+// Evento online con grupo de WhatsApp propio para CUALQUIER producto, no solo
+// Holding / SEF Online: el evento de la DB del mismo día (modalidad online y
+// enlace de grupo válido) que corresponda al nombre del elemento del pedido.
+// Coincidencia, en orden:
+//   1. título/slug contiene el nombre (o un alias);
+//   2. mayor coincidencia de palabras ("Reformas" ↔ "reforma-fiscal-2027");
+//   3. si el elemento se marcó Online y es el único evento con grupo ese día.
+// Un elemento presencial nunca cae al paso 3, y un empate entre dos eventos no
+// se adivina: devuelve null y el elemento no manda el grupo equivocado.
+export const findOnlineGroupEvent = async (name: string, date: string, markedOnline: boolean): Promise<ResolvedEvent | null> => {
+  const sameDay = (await Event.find({})).filter((e) => mxDay(e.startDate) === date);
+  const candidates = sameDay.filter((e) => eventGroupKey(e) !== null);
+  if (candidates.length === 0) return null;
+
+  // Un elemento sin marca Online que también corresponde a un evento presencial
+  // de ese día es ambiguo (misma fecha, dos modalidades): no se adivina.
+  const wantedName = norm(name);
+  const wantedAliases = env.hubspot.eventAliases[wantedName] ?? [];
+  if (!markedOnline && sameDay.some(
+    (e) => e.modality !== 'online' && (nameMatches(e.title, e.slug, wantedName, wantedAliases) || nameOverlap(name, e.title, e.slug) > 0),
+  )) return null;
+
+  const toResolved = (db: (typeof candidates)[number]): ResolvedEvent => ({
+    refId: String(db._id), slug: db.slug, title: db.title, startDate: db.startDate, endDate: db.endDate,
+    location: db.location, modality: db.modality, source: 'db', groupUrl: db.whatsappGroupUrl,
+  });
+  const best = (list: typeof candidates): typeof candidates[number] | null => {
+    if (list.length === 1) return list[0];
+    const scored = list.map((e) => ({ e, s: nameOverlap(name, e.title, e.slug) })).sort((a, b) => b.s - a.s);
+    return scored[0] && scored[0].s > 0 && scored[0].s > (scored[1]?.s ?? 0) ? scored[0].e : null;
+  };
+
+  const byName = candidates.filter((e) => nameMatches(e.title, e.slug, wantedName, wantedAliases));
+  if (byName.length > 0) {
+    const pick = best(byName);
+    return pick ? toResolved(pick) : null;
+  }
+  const byWords = candidates.filter((e) => nameOverlap(name, e.title, e.slug) > 0);
+  if (byWords.length > 0) {
+    const pick = best(byWords);
+    return pick ? toResolved(pick) : null;
+  }
+  if (markedOnline && candidates.length === 1) return toResolved(candidates[0]);
+  return null;
+};
+
 // ---------------------------------------------------------------------------
 // Procesamiento
 // ---------------------------------------------------------------------------
@@ -362,7 +410,7 @@ const buildCards = async (tickets: IEventTicketDocument[]) =>
 const deliverGroupEmail = async (record: IHubspotSyncDocument): Promise<boolean> => {
   if (!record.groupKey || !record.inviteToken || !record.attendeeEmail || smtpPaused()) return false;
   try {
-    const card = await cardFromToken(record.inviteToken, record.groupKey as GroupKey);
+    const card = await cardFromToken(record.inviteToken, record.groupKey as GroupKey, record.eventTitle);
     await sendEventGroupEmail({
       name: record.attendeeName || record.attendeeEmail.split('@')[0],
       email: record.attendeeEmail,
@@ -396,7 +444,7 @@ const deliverAdvisorCopy = async (record: IHubspotSyncDocument): Promise<boolean
   try {
     const reference = formatTicketOrderRef(`hubspot:${record.dealId}`);
     if (record.groupKey && record.inviteToken) {
-      const card = await cardFromToken(record.inviteToken, record.groupKey as GroupKey);
+      const card = await cardFromToken(record.inviteToken, record.groupKey as GroupKey, record.eventTitle);
       const clientName = record.attendeeName || record.attendeeEmail;
       await sendEventGroupEmail({
         name: clientName,
@@ -692,17 +740,30 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     // Holding y SEF Online no llevan boleto: reciben el bloque verde para unirse al
     // grupo de WhatsApp (un solo uso). Sin enlace configurado quedan pendientes y
     // salen solos cuando se configure.
-    const groupKey = detectGroupProduct(parsed.name, parsed.tier === 'Online' ? 'online' : '');
+    let groupKey = detectGroupProduct(parsed.name, parsed.tier === 'Online' ? 'online' : '');
+    let groupEvent: ResolvedEvent | null = null;
     if (groupKey) {
-      const groupEvent = await findGroupEvent(parsed.name, parsed.date, groupKey);
+      groupEvent = await findGroupEvent(parsed.name, parsed.date, groupKey);
+    } else {
+      // Cualquier otro evento online con grupo propio (masterclass, taller...):
+      // se detecta por el evento de la DB del mismo día, no por el nombre.
+      const markedOnline = parsed.tier === 'Online' || /\b(online|virtual|zoom|en l[ií]nea)\b/i.test(parsed.name);
+      const found = await findOnlineGroupEvent(parsed.name, parsed.date, markedOnline);
+      if (found) {
+        groupKey = eventGroupKey({ title: found.title, slug: found.slug, modality: found.modality, whatsappGroupUrl: found.groupUrl }) ?? 'event';
+        groupEvent = found;
+      }
+    }
+    if (groupKey) {
+      const label = groupKey === 'event' ? groupEvent?.title || parsed.name : groupLabel(groupKey);
       if (!isGroupConfigured(groupKey, groupEvent?.groupUrl, true)) {
         summary.pendingEvent += 1;
         if (!c.pending) {
-          log(`negocio ${deal.id} · "${c.props.name}" → PENDIENTE: falta el enlace del grupo de WhatsApp de ${groupLabel(groupKey)} del ${parsed.date} (admin → Eventos → campo "Grupo de WhatsApp"; el evento debe existir en la DB)`);
+          log(`negocio ${deal.id} · "${c.props.name}" → PENDIENTE: falta el enlace del grupo de WhatsApp de ${label} del ${parsed.date} (admin → Eventos → campo "Grupo de WhatsApp"; el evento debe existir en la DB)`);
           if (!dryRun) {
             await HubspotSync.create({
               kind: 'item', dealId: deal.id, lineItemId: c.id, status: 'pending_event',
-              reason: `sin enlace del grupo de ${groupLabel(groupKey)}`,
+              reason: `sin enlace del grupo de ${label}`,
               productName: String(c.props.name ?? ''), attendeeEmail: email, attendeeName: attendee.name,
             });
           }
@@ -711,7 +772,7 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
       }
       summary.issued += 1;
       if (dryRun) {
-        log(`[dry] negocio ${deal.id} · ${email} · ${groupLabel(groupKey)} → invitación al grupo de WhatsApp${advisor ? ` · copia → ${advisor.email}` : ''}`);
+        log(`[dry] negocio ${deal.id} · ${email} · ${label} → invitación al grupo de WhatsApp${advisor ? ` · copia → ${advisor.email}` : ''}`);
         continue;
       }
       // Datos para el resumen de compra del correo (igual que el recibo de la web)
@@ -722,7 +783,7 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
       const groupMeta = {
         eventRefId: groupEvent?.refId ?? `${groupKey}-${parsed.date}`,
         eventSlug: groupEvent?.slug ?? `${groupKey}-${parsed.date}`,
-        eventTitle: groupEvent?.title || groupLabel(groupKey),
+        eventTitle: groupEvent?.title || label,
         eventDate: eventDateLabel,
         amount: Number(c.props.price) || 0,
         advisorName: advisor && advisor.email !== email ? advisor.name : '',
@@ -737,7 +798,7 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
         attendeeName: attendee.name,
         groupKey,
         inviteToken: card.token,
-        eventTitle: groupEvent?.title || groupLabel(groupKey),
+        eventTitle: groupEvent?.title || label,
         eventDateLabel,
         eventFormat: groupEvent?.location ? `Online · ${groupEvent.location}` : 'Online',
         amount: Number(c.props.price) || 0,
@@ -752,11 +813,33 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
       } else {
         groupRecord = await HubspotSync.create({ kind: 'item', dealId: deal.id, lineItemId: c.id, ...fields });
       }
-      log(`negocio ${deal.id} · ${email} · invitación al grupo de ${groupLabel(groupKey)}`);
+      log(`negocio ${deal.id} · ${email} · invitación al grupo de ${label}`);
       if (await deliverGroupEmail(groupRecord)) summary.emailsSent += 1;
       continue;
     }
 
+    // Online sin grupo resuelto arriba. Una venta no se pierde en silencio: si el
+    // evento aún no existe en la web o es online pero sin enlace de WhatsApp,
+    // queda PENDIENTE y sale sola cuando se cree o se pegue el enlace.
+    if (parsed.tier === 'Online' || /online/i.test(parsed.name)) {
+      const known = await findEvent(parsed.name, parsed.date);
+      if (!known || known.modality === 'online') {
+        summary.pendingEvent += 1;
+        const reason = known
+          ? `el evento "${known.title}" es online pero no tiene enlace de grupo de WhatsApp`
+          : `sin evento online "${parsed.name}" el ${parsed.date}`;
+        if (!c.pending) {
+          log(`negocio ${deal.id} · "${c.props.name}" → PENDIENTE: ${reason} (admin → Eventos → "Grupo de WhatsApp"); sale solo al corregirlo`);
+          if (!dryRun) {
+            await HubspotSync.create({
+              kind: 'item', dealId: deal.id, lineItemId: c.id, status: 'pending_event',
+              reason, productName: String(c.props.name ?? ''), attendeeEmail: email, attendeeName: attendee.name,
+            });
+          }
+        }
+        continue;
+      }
+    }
     if (parsed.tier === 'Online') { await markSkipped(c, 'entrada Online'); continue; }
     // Red de seguridad: un producto "SEF ONLINE | General" es un error de captura.
     if (/online/i.test(parsed.name)) { await markSkipped(c, 'el nombre del producto indica online'); continue; }

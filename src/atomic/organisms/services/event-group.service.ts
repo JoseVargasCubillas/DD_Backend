@@ -1,5 +1,7 @@
 /**
- * Eventos online con acceso por grupo de WhatsApp (Holding y SEF Online).
+ * Eventos online con acceso por grupo de WhatsApp: Holding, SEF Online y
+ * cualquier otro evento online que tenga su enlace en el campo "Grupo de
+ * WhatsApp" (admin → Eventos).
  *
  * Quien compra uno de estos productos (en la página o por un negocio ganado en
  * HubSpot) recibe un bloque verde "Únete al grupo de WhatsApp" con un enlace de
@@ -17,11 +19,15 @@ import { env } from '../../../config/env.js';
 import { EventGroupInvite } from '../../molecules/models/event-group-invite.model.js';
 import { registerOnlineAttendee } from './ticket.service.js';
 
-export type GroupKey = 'holding' | 'sef-online';
+// 'event' = cualquier otro evento online cuya edición trae su propio enlace de
+// grupo (campo "Grupo de WhatsApp" del evento). No tiene respaldo en el .env:
+// el enlace siempre es el de la edición.
+export type GroupKey = 'holding' | 'sef-online' | 'event';
 
 const GROUPS: Record<GroupKey, { label: string; url: () => string }> = {
   holding: { label: 'Holding', url: () => env.whatsapp.holdingGroupUrl },
   'sef-online': { label: 'Seminario Estrategia Fiscal Online', url: () => env.whatsapp.sefOnlineGroupUrl },
+  event: { label: 'Grupo de WhatsApp del evento', url: () => '' },
 };
 
 const norm = (s: string): string =>
@@ -45,6 +51,35 @@ export const detectGroupProduct = (...parts: Array<string | undefined | null>): 
 export const groupLabel = (key: GroupKey): string => GROUPS[key].label;
 
 const GROUP_URL_RE = /^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]+\/?(\?.*)?$/;
+
+export const isValidGroupUrl = (url?: string | null): boolean => GROUP_URL_RE.test(String(url ?? '').trim());
+
+// Grupo que le toca a un evento de la DB: online y con enlace propio válido.
+// Si además es de Holding / SEF Online conserva su clave de siempre; cualquier
+// otro (masterclass, taller, lo que se abra) usa 'event'. Null si no lleva grupo.
+export const eventGroupKey = (
+  event: { title?: string | null; slug?: string | null; modality?: string | null; whatsappGroupUrl?: string | null } | null | undefined,
+): GroupKey | null => {
+  if (!event || event.modality !== 'online' || !isValidGroupUrl(event.whatsappGroupUrl)) return null;
+  return detectGroupProduct(event.title, event.slug, 'online') ?? 'event';
+};
+
+// Palabras que no distinguen un evento de otro al comparar el nombre del
+// elemento del pedido con el título/slug del evento.
+const NAME_STOP = new Set([
+  'online', 'virtual', 'zoom', 'linea', 'general', 'vip', 'masterclass', 'master', 'class',
+  'seminario', 'taller', 'evento', 'curso', 'del', 'las', 'los', 'para', 'con', 'por',
+]);
+
+// Raíces de las palabras con significado ("Reformas" y "reforma" → "refor").
+export const nameTokens = (s: string): string[] =>
+  norm(s).split(' ').filter((t) => t.length >= 3 && !NAME_STOP.has(t)).map((t) => t.slice(0, 5));
+
+// Cuántas raíces del nombre pedido aparecen en título + slug del evento.
+export const nameOverlap = (wanted: string, title: string, slug: string): number => {
+  const have = new Set(nameTokens(`${title} ${slug}`));
+  return [...new Set(nameTokens(wanted))].filter((t) => have.has(t)).length;
+};
 
 // Enlace real del grupo (nunca se manda por correo). Cada edición tiene el suyo
 // en el campo "Grupo de WhatsApp" del evento (admin → Eventos); sin él, el del
@@ -125,12 +160,13 @@ export const issueGroupInvite = async (input: {
       console.warn('[event-group] no se pudo registrar al inscrito online:', (err as Error).message);
     }
   }
-  return cardFromToken(invite.token, input.key);
+  return cardFromToken(invite.token, input.key, input.eventTitle);
 };
 
 // Arma la tarjeta (enlace + QR) de una invitación ya emitida; sirve también
 // para reintentar un correo que falló.
-export const cardFromToken = async (token: string, key: GroupKey): Promise<GroupInviteCard> => {
+// `label` (título del evento) solo aplica a los grupos genéricos ('event').
+export const cardFromToken = async (token: string, key: GroupKey, label?: string): Promise<GroupInviteCard> => {
   const joinUrl = buildGroupJoinUrl(token);
   const qrPng = await QRCode.toBuffer(joinUrl, {
     type: 'png',
@@ -139,7 +175,7 @@ export const cardFromToken = async (token: string, key: GroupKey): Promise<Group
     width: 480,
     color: { dark: '#17130f', light: '#ffffff' },
   });
-  return { label: GROUPS[key].label, joinUrl, qrCid: `grp-${token.slice(0, 12)}@diegodiaz.mx`, qrPng, token };
+  return { label: (key === 'event' && label?.trim()) || GROUPS[key].label, joinUrl, qrCid: `grp-${token.slice(0, 12)}@diegodiaz.mx`, qrPng, token };
 };
 
 // Canjea el enlace: la primera vez resuelve al grupo real; después queda usado.

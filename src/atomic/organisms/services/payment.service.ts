@@ -4,7 +4,7 @@ import { Order, IOrderDocument, IOrderShippingAddress, IOrderContact } from '../
 import { Subscription } from '../../molecules/models/subscription.model.js';
 import { User, IUserDocument } from '../../molecules/models/user.model.js';
 import { Book } from '../../molecules/models/book.model.js';
-import { Event } from '../../molecules/models/event.model.js';
+import { Event, IEventDocument } from '../../molecules/models/event.model.js';
 import { ORDER_STATUS, SUBSCRIPTION_STATUS } from '../../atoms/constants/status.constant.js';
 import {
   sendAcademiaOrderNotice,
@@ -24,7 +24,7 @@ import { issueWhatsappInviteToken, buildWhatsappInviteUrl } from './whatsapp-inv
 import { applyPromotion, registerPromotionUse } from './promotion.service.js';
 import { buildEventTicketTitle, formatEventDateLabel, formatEventFormatLabel, sanitizeTicketLabel } from '../../atoms/helpers/event-ticket.helper.js';
 import { createTicketsForOrder, renderTicketQrBuffer } from './ticket.service.js';
-import { detectGroupProduct, issueGroupInvite, GroupInviteCard } from './event-group.service.js';
+import { detectGroupProduct, eventGroupKey, issueGroupInvite, GroupInviteCard } from './event-group.service.js';
 import { EventTicket } from '../../molecules/models/event-ticket.model.js';
 import { buildTicketUrl } from '../../atoms/helpers/ticket-token.helper.js';
 import Stripe from 'stripe';
@@ -256,10 +256,21 @@ const sendReceiptIfEventOrder = async (order: IOrderDocument): Promise<void> => 
     try {
       for (const [index, item] of order.items.entries()) {
         if (item.type !== 'event') continue;
-        const key = detectGroupProduct(item.refId, item.title, item.eventFormat);
+        // Edición comprada: por id, por refId (id o slug) o por el slug del pedido.
+        const lookups: Array<() => PromiseLike<IEventDocument | null>> = [
+          async () => (item.eventId ? await Event.findById(String(item.eventId)) : null),
+          async () => (item.refId ? await Event.findById(String(item.refId)) : null),
+          async () => (item.refId || item.eventSlug ? await Event.findOne({ slug: String(item.eventSlug || item.refId) }) : null),
+        ];
+        let boughtEvent = null as IEventDocument | null;
+        for (const lookup of lookups) {
+          boughtEvent = await Promise.resolve(lookup()).then((e) => e ?? null, () => null);
+          if (boughtEvent) break;
+        }
+        // Holding / SEF Online por nombre; cualquier otro evento online por tener
+        // enlace de grupo propio en su edición (campo "Grupo de WhatsApp").
+        const key = detectGroupProduct(item.refId, item.title, item.eventFormat) ?? eventGroupKey(boughtEvent);
         if (!key) continue;
-        // Grupo de la edición comprada: campo "Grupo de WhatsApp" del evento.
-        const boughtEvent = item.eventId ? await Event.findById(item.eventId).then((e) => e, () => null) : null;
         const card = await issueGroupInvite({
           ref: `web:${String(order._id)}:${index}`,
           key,
