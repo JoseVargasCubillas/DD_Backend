@@ -71,6 +71,7 @@ const isStripeConfigured = (): boolean =>
 // aquí, nunca se confía en el que manda el cliente.
 const EVENT_TICKET_CATALOG: Record<string, { title: string; price: number }> = {
   'holding-masterclass-2026': { title: 'Holding · El legado de los empresarios', price: 1997 },
+  'reforma-fiscal-2027': { title: 'Masterclass Reforma Fiscal 2027', price: 2997 },
   // Sin ciudad en el título: la sede/plataforma y la fecha de la edición se
   // agregan con buildEventTicketTitle (eventFormat / eventDate del ticket).
   'estrategia-fiscal-online': { title: 'Taller de Estrategia Fiscal · Online', price: 4997 },

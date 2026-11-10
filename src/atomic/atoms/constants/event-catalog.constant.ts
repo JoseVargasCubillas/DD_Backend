@@ -120,6 +120,13 @@ export const EVENT_CATALOG: CatalogEvent[] = [
     "modality": "online"
   },
   {
+    "title": "Masterclass Reforma Fiscal 2027",
+    "slug": "reforma-fiscal-2027",
+    "startDate": "2026-11-17T18:00:00-06:00",
+    "location": "Zoom",
+    "modality": "online"
+  },
+  {
     "title": "4E Código Rockefeller",
     "slug": "4e-codigo-rockefeller",
     "startDate": "2026-11-20T09:07:00-06:00",
