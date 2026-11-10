@@ -115,7 +115,7 @@ export const EVENT_CATALOG: CatalogEvent[] = [
   {
     "title": "El Tablero del CEO",
     "slug": "tablero-del-ceo-noviembre",
-    "startDate": "2026-11-10T10:00:00-06:00",
+    "startDate": "2026-11-10T19:30:00-06:00",
     "location": "Zoom",
     "modality": "online"
   },
