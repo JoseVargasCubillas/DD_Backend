@@ -1,5 +1,7 @@
 import { RequestHandler } from 'express';
 import * as ticketService from '../../organisms/services/ticket.service.js';
+import * as attendeeAdmin from '../../organisms/services/attendee-admin.service.js';
+import { AttendeeError } from '../../organisms/services/attendee-admin.service.js';
 import { FOLIO_PATTERN, normalizeFolio, parseScannedTicket } from '../../atoms/helpers/ticket-token.helper.js';
 import { success, notFound, forbidden, badRequest, serverError } from '../../atoms/helpers/response.helper.js';
 
@@ -75,6 +77,60 @@ export const undoCheckIn: RequestHandler = async (req, res) => {
     success(res, ticket);
   } catch (err: any) {
     serverError(res, err);
+  }
+};
+
+// Errores de las herramientas de asistentes: AttendeeError trae su código HTTP.
+const attendeeFail = (res: Parameters<RequestHandler>[1], err: unknown) =>
+  err instanceof AttendeeError
+    ? res.status(err.statusCode).json({ success: false, message: err.message })
+    : serverError(res, err as Error);
+
+// POST /events/:id/attendees (admin) { name, email, phone?, amount?, ticketType?, sendEmail?, force? }
+export const addAttendee: RequestHandler = async (req, res) => {
+  try {
+    const body = req.body ?? {};
+    const result = await attendeeAdmin.addAttendee({
+      eventIdOrSlug: req.params.id,
+      name: body.name,
+      email: body.email,
+      phone: body.phone,
+      amount: body.amount,
+      ticketType: body.ticketType === 'VIP' ? 'VIP' : body.ticketType === 'General' ? 'General' : undefined,
+      sendEmail: body.sendEmail !== false,
+      force: body.force === true,
+    });
+    success(res, result, 201);
+  } catch (err) {
+    attendeeFail(res, err);
+  }
+};
+
+// POST /tickets/:folio/void (admin) — baja reversible
+export const voidAttendee: RequestHandler = async (req, res) => {
+  try {
+    success(res, await attendeeAdmin.voidAttendee(req.params.folio));
+  } catch (err) {
+    attendeeFail(res, err);
+  }
+};
+
+// POST /tickets/:folio/reactivate (admin)
+export const reactivateAttendee: RequestHandler = async (req, res) => {
+  try {
+    success(res, await attendeeAdmin.reactivateAttendee(req.params.folio));
+  } catch (err) {
+    attendeeFail(res, err);
+  }
+};
+
+// DELETE /tickets/:folio (admin) — solo altas manuales
+export const deleteAttendee: RequestHandler = async (req, res) => {
+  try {
+    await attendeeAdmin.deleteAttendee(req.params.folio);
+    success(res, { deleted: true });
+  } catch (err) {
+    attendeeFail(res, err);
   }
 };
 

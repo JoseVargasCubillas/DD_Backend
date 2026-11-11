@@ -14,6 +14,7 @@ export const formatTicketOrderRef = (orderId: string): string => {
   let id = String(orderId || '');
   const hubspot = id.match(/^hubspot:(\d+)/i);
   if (hubspot) return `HP-${hubspot[1]}`;
+  if (/^manual:/i.test(id)) return `AL-${id.replace(/[^a-z0-9]/gi, '').slice(-8).toUpperCase()}`;
   // Inscritos online: "web:<orderId>:<item>".
   id = id.replace(/^web:([^:]+):.*$/i, '$1');
   const tail = id.replace(/[^a-z0-9]/gi, '').slice(-8).toUpperCase();

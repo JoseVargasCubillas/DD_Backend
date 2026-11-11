@@ -15,6 +15,8 @@ export interface IEventGroupInviteDocument extends SqlDocumentMethods<IEventGrou
   email: string;
   name: string;
   usedAt: string | null;
+  // Baja desde Asistentes: el enlace deja de abrir el grupo (se puede reactivar).
+  revokedAt?: string | null;
   createdAt: Date | string;
   updatedAt: Date | string;
 }

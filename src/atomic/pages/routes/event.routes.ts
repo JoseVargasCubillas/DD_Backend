@@ -2,13 +2,14 @@ import { Router } from 'express';
 import * as eventController from '../../templates/controllers/event.controller.js';
 import { authenticate } from '../../molecules/middleware/auth.middleware.js';
 import { requireAdmin } from '../../molecules/middleware/role.middleware.js';
-import { listEventAttendees } from '../../templates/controllers/ticket.controller.js';
+import { addAttendee, listEventAttendees } from '../../templates/controllers/ticket.controller.js';
 
 const router = Router();
 router.get('/', eventController.list);
 router.get('/:slug', eventController.getBySlug);
 router.use(authenticate);
 router.get('/:id/attendees', requireAdmin, listEventAttendees);
+router.post('/:id/attendees', requireAdmin, addAttendee);
 router.post('/:id/register', eventController.register);
 router.post('/', requireAdmin, eventController.create);
 router.put('/:id', requireAdmin, eventController.update);

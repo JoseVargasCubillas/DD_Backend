@@ -10,6 +10,10 @@ const router = Router();
 router.post('/check-in', authenticate, requireStaff, ticketController.checkIn);
 router.get('/check-in/events', authenticate, requireStaff, ticketController.listCheckInEvents);
 router.post('/:folio/undo-check-in', authenticate, requireAdmin, ticketController.undoCheckIn);
+// Herramientas de Asistentes (solo admin): baja reversible, reactivar y eliminar altas manuales.
+router.post('/:folio/void', authenticate, requireAdmin, ticketController.voidAttendee);
+router.post('/:folio/reactivate', authenticate, requireAdmin, ticketController.reactivateAttendee);
+router.delete('/:folio', authenticate, requireAdmin, ticketController.deleteAttendee);
 
 // Público: el QR del correo abre /boleto/:folio?t= en el frontend, que
 // consulta estos endpoints con la firma.

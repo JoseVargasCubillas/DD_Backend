@@ -26,6 +26,15 @@ export interface IHubspotSyncDocument extends SqlDocumentMethods<IHubspotSyncDoc
   // Eventos online con grupo de WhatsApp: producto y token de la invitación enviada.
   groupKey?: string;
   inviteToken?: string;
+  // true: emitido (o actualizado) con la conciliación de asientos. Los anteriores
+  // solo se reconcilian si el elemento se modificó en HubSpot después de emitirse.
+  seatsV2?: boolean;
+  // Un enlace por asiento cuando la cantidad es mayor a 1 (el primero es inviteToken).
+  inviteTokens?: string[];
+  // Asientos agregados después (cambio de cantidad/acompañantes): el siguiente
+  // correo y la copia al asesor llevan solo estos y luego se limpian.
+  mailFolios?: string[];
+  mailTokens?: string[];
   // Datos del resumen de compra del correo de grupo (para reintentarlo igual).
   eventTitle?: string;
   eventDateLabel?: string;

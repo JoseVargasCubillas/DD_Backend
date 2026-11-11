@@ -32,10 +32,13 @@ import { HubspotSync, IHubspotSyncDocument } from '../../molecules/models/hubspo
 import { buildTicketUrl } from '../../atoms/helpers/ticket-token.helper.js';
 import { formatEventDateLabel, formatTicketOrderRef } from '../../atoms/helpers/event-ticket.helper.js';
 import {
+  bumpSeatTotal,
   createTicketsForExternalSale,
-  findActiveTicketForEvent,
+  loadSeatPool,
   renderTicketQrBuffer,
 } from './ticket.service.js';
+import { EventGroupInvite } from '../../molecules/models/event-group-invite.model.js';
+import { isSameLine, planSeats } from '../../atoms/helpers/seat-plan.helper.js';
 import { isAttendanceSheetEnabled, syncTicketRow } from './attendance-sheet.service.js';
 import { sendEventTicketsEmail, sendEventGroupEmail } from './email.service.js';
 import {
@@ -407,15 +410,43 @@ const buildCards = async (tickets: IEventTicketDocument[]) =>
 
 // Eventos online con grupo de WhatsApp: manda (o reintenta) el correo con el
 // bloque verde de un solo uso.
+// Enlaces que lleva el correo: los asientos nuevos si los hay (cambio de cantidad),
+// si no todos los del elemento.
+const mailTokensOf = (record: IHubspotSyncDocument): string[] => {
+  if (record.mailTokens?.length) return record.mailTokens;
+  if (record.inviteTokens?.length) return record.inviteTokens;
+  return record.inviteToken ? [record.inviteToken] : [];
+};
+
+// Una tarjeta por enlace; con varios asientos cada una lleva el nombre del asistente.
+const groupCardsOf = async (record: IHubspotSyncDocument): Promise<Awaited<ReturnType<typeof cardFromToken>>[]> => {
+  const tokens = mailTokensOf(record);
+  const cards = [];
+  for (const token of tokens) {
+    let suffix: string | undefined;
+    if (tokens.length > 1) suffix = (await EventGroupInvite.findOne({ token }))?.name;
+    cards.push(await cardFromToken(token, record.groupKey as GroupKey, record.eventTitle, suffix));
+  }
+  return cards;
+};
+
+// Terminado el correo (y la copia al asesor) los asientos "nuevos" dejan de serlo.
+const clearMailBatch = async (record: IHubspotSyncDocument): Promise<void> => {
+  if (!record.mailFolios?.length && !record.mailTokens?.length) return;
+  record.mailFolios = [];
+  record.mailTokens = [];
+  await record.save();
+};
+
 const deliverGroupEmail = async (record: IHubspotSyncDocument): Promise<boolean> => {
-  if (!record.groupKey || !record.inviteToken || !record.attendeeEmail || smtpPaused()) return false;
+  if (!record.groupKey || !mailTokensOf(record).length || !record.attendeeEmail || smtpPaused()) return false;
   try {
-    const card = await cardFromToken(record.inviteToken, record.groupKey as GroupKey, record.eventTitle);
+    const cards = await groupCardsOf(record);
     await sendEventGroupEmail({
       name: record.attendeeName || record.attendeeEmail.split('@')[0],
       email: record.attendeeEmail,
       reference: formatTicketOrderRef(`hubspot:${record.dealId}`),
-      groups: [card],
+      groups: cards,
       title: record.eventTitle || groupLabel(record.groupKey as GroupKey),
       eventDate: record.eventDateLabel || '',
       eventFormat: record.eventFormat || 'Online',
@@ -425,6 +456,7 @@ const deliverGroupEmail = async (record: IHubspotSyncDocument): Promise<boolean>
     record.emailLastError = '';
     await record.save();
     await deliverAdvisorCopy(record);
+    if (!record.advisorEmail || record.advisorCopySentAt) await clearMailBatch(record);
     return true;
   } catch (err) {
     if (isSmtpCap(err)) { log('tope diario de Gmail alcanzado — el correo de grupo se reintenta más tarde'); return false; }
@@ -443,14 +475,14 @@ const deliverAdvisorCopy = async (record: IHubspotSyncDocument): Promise<boolean
   if (!record.advisorEmail || record.advisorCopySentAt || !record.emailSentAt || !record.attendeeEmail || smtpPaused()) return false;
   try {
     const reference = formatTicketOrderRef(`hubspot:${record.dealId}`);
-    if (record.groupKey && record.inviteToken) {
-      const card = await cardFromToken(record.inviteToken, record.groupKey as GroupKey, record.eventTitle);
+    if (record.groupKey && mailTokensOf(record).length) {
+      const cards = await groupCardsOf(record);
       const clientName = record.attendeeName || record.attendeeEmail;
       await sendEventGroupEmail({
         name: clientName,
         email: record.attendeeEmail,
         reference,
-        groups: [card],
+        groups: cards,
         title: record.eventTitle || groupLabel(record.groupKey as GroupKey),
         eventDate: record.eventDateLabel || '',
         eventFormat: record.eventFormat || 'Online',
@@ -459,7 +491,7 @@ const deliverAdvisorCopy = async (record: IHubspotSyncDocument): Promise<boolean
       });
     } else {
       const tickets: IEventTicketDocument[] = [];
-      for (const folio of record.folios ?? []) {
+      for (const folio of record.mailFolios?.length ? record.mailFolios : record.folios ?? []) {
         const t = await EventTicket.findOne({ folio });
         if (t) tickets.push(t);
       }
@@ -475,6 +507,7 @@ const deliverAdvisorCopy = async (record: IHubspotSyncDocument): Promise<boolean
     }
     record.advisorCopySentAt = new Date().toISOString();
     await record.save();
+    await clearMailBatch(record);
     log(`copia enviada al asesor ${record.advisorEmail} (negocio ${record.dealId})`);
     return true;
   } catch (err) {
@@ -489,7 +522,8 @@ const deliverAdvisorCopy = async (record: IHubspotSyncDocument): Promise<boolean
 // Manda (o reintenta) el correo de un item ya emitido.
 const deliverEmail = async (record: IHubspotSyncDocument): Promise<boolean> => {
   if (record.groupKey) return deliverGroupEmail(record);
-  const folios = record.folios ?? [];
+  // Solo los boletos agregados después, si los hay; si no, todos los del elemento.
+  const folios = record.mailFolios?.length ? record.mailFolios : record.folios ?? [];
   const tickets: IEventTicketDocument[] = [];
   for (const folio of folios) {
     const t = await EventTicket.findOne({ folio });
@@ -508,6 +542,7 @@ const deliverEmail = async (record: IHubspotSyncDocument): Promise<boolean> => {
     record.emailLastError = '';
     await record.save();
     await deliverAdvisorCopy(record);
+    if (!record.advisorEmail || record.advisorCopySentAt) await clearMailBatch(record);
     return true;
   } catch (err) {
     if (isSmtpCap(err)) { log('tope diario de Gmail alcanzado — el correo se reintenta más tarde'); return false; }
@@ -535,7 +570,10 @@ const applyAdvisorToTickets = async (record: IHubspotSyncDocument): Promise<numb
   // Boletos presenciales (por folio) o, en Holding / SEF Online, el inscrito online.
   const targets: Array<IEventTicketDocument | null> = [];
   for (const folio of record.folios ?? []) targets.push(await EventTicket.findOne({ folio }));
-  if (record.groupKey) targets.push(await EventTicket.findOne({ orderId: `hubspot:${record.dealId}:${record.lineItemId}` }));
+  if (record.groupKey) {
+    const lineRef = `hubspot:${record.dealId}:${record.lineItemId}`;
+    targets.push(...(await EventTicket.find({})).filter((t) => isSameLine(t.orderId, lineRef)));
+  }
   for (const t of targets) {
     if (!t || t.advisorName === name) continue;
     const folio = t.folio;
@@ -662,22 +700,53 @@ const retryPendingEmails = async (): Promise<number> => {
 
 type DealResult = 'ok' | 'retry';
 
+// Elemento del pedido en revisión. `issued` = ya emitido antes (solo se agregan
+// asientos); `pending` = esperaba evento/enlace, o se omitió por duplicado.
+interface Candidate {
+  id: string;
+  props: Json;
+  parsed: ParsedProductName;
+  pending?: IHubspotSyncDocument;
+  issued?: IHubspotSyncDocument;
+}
+
+// Los omitidos con este motivo se reevalúan (duplicados que pueden dejar de serlo).
+const REEVALUATE_SKIP = 'ya tiene';
+
+// Un evento que ya terminó no recibe asientos nuevos por reconciliación: así un
+// negocio viejo que se vuelve a tocar en HubSpot no emite boletos de eventos pasados.
+const eventIsOver = (e: { startDate: Date | string; endDate?: Date | string | null }): boolean => {
+  const end = e.endDate ? new Date(e.endDate).getTime() : new Date(e.startDate).getTime() + 24 * 60 * 60 * 1000;
+  return Number.isFinite(end) && Date.now() > end;
+};
+const isReevaluation = (c: { issued?: unknown; pending?: IHubspotSyncDocument }): boolean =>
+  Boolean(c.issued) || c.pending?.status === 'skipped';
+const loggedCaps = new Set<string>();
+
 const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary): Promise<DealResult> => {
   const lineItemIds = await associatedIds('deals', 'line_items', deal.id);
   if (lineItemIds.length === 0) return 'ok';
 
   const lineItems = await batchRead('line_items', lineItemIds, [
-    'name', 'quantity', 'price', 'description', 'hs_product_id', 'hs_line_item_currency_code',
+    'name', 'quantity', 'price', 'description', 'hs_product_id', 'hs_line_item_currency_code', 'hs_lastmodifieddate',
   ]);
 
-  // Solo line items con el formato nuevo y que no se hayan procesado.
-  const candidates: Array<{ id: string; props: Json; parsed: ParsedProductName; pending?: IHubspotSyncDocument }> = [];
+  // Solo line items con el formato nuevo. Se vuelven a revisar los que esperan
+  // evento, los emitidos (por si subió la cantidad o cambiaron los acompañantes:
+  // solo se emiten los asientos que faltan) y los omitidos por "ya tiene", que
+  // pueden dejar de ser duplicado si el asesor corrige nombres o cantidad.
+  const candidates: Candidate[] = [];
   for (const [id, props] of lineItems) {
     const parsed = parseProductName(props.name);
     if (!parsed) continue;
     const existing = await findItemRecord(deal.id, id);
-    if (existing && existing.status !== 'pending_event') continue;
-    candidates.push({ id, props, parsed, ...(existing && { pending: existing }) });
+    if (existing?.status === 'issued') {
+      candidates.push({ id, props, parsed, issued: existing });
+    } else if (existing && existing.status === 'skipped' && !String(existing.reason ?? '').startsWith(REEVALUATE_SKIP)) {
+      continue;
+    } else {
+      candidates.push({ id, props, parsed, ...(existing && { pending: existing }) });
+    }
   }
   if (candidates.length === 0) return 'ok';
 
@@ -719,7 +788,10 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     log(`negocio ${deal.id}: no se pudo leer "${env.hubspot.companionsProperty}" — ${(err as Error).message.slice(0, 120)}`);
   }
 
-  const markSkipped = async (c: (typeof candidates)[number], reason: string): Promise<void> => {
+  const markSkipped = async (c: Candidate, reason: string): Promise<void> => {
+    // Un elemento ya emitido nunca pasa a omitido; y el mismo motivo no se repite.
+    if (c.issued) return;
+    if (c.pending?.status === 'skipped' && c.pending.reason === reason) return;
     summary.skipped += 1;
     log(`negocio ${deal.id} · "${c.props.name}" → omitido (${reason})`);
     if (dryRun) return;
@@ -737,6 +809,14 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
 
   for (const c of candidates) {
     const { parsed } = c;
+    // Emitidos antes de la conciliación de asientos: no se les agrega nada
+    // retroactivamente. Solo si el asesor modificó el elemento en HubSpot después
+    // de que se emitió (p. ej. corrige la cantidad) se revisa si falta un asiento.
+    if (c.issued && !c.issued.seatsV2) {
+      const modifiedAt = new Date(String(c.props.hs_lastmodifieddate ?? '')).getTime();
+      const issuedAt = new Date(String(c.issued.createdAt)).getTime();
+      if (!(modifiedAt > issuedAt + 60_000)) continue;
+    }
     // Holding y SEF Online no llevan boleto: reciben el bloque verde para unirse al
     // grupo de WhatsApp (un solo uso). Sin enlace configurado quedan pendientes y
     // salen solos cuando se configure.
@@ -756,7 +836,8 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     }
     if (groupKey) {
       const label = groupKey === 'event' ? groupEvent?.title || parsed.name : groupLabel(groupKey);
-      if (!isGroupConfigured(groupKey, groupEvent?.groupUrl, true)) {
+      if (!isGroupConfigured(groupKey, groupEvent?.groupUrl, true) || !groupEvent) {
+        if (c.issued) continue; // ya emitido: no se vuelve a marcar pendiente
         summary.pendingEvent += 1;
         if (!c.pending) {
           log(`negocio ${deal.id} · "${c.props.name}" → PENDIENTE: falta el enlace del grupo de WhatsApp de ${label} del ${parsed.date} (admin → Eventos → campo "Grupo de WhatsApp"; el evento debe existir en la DB)`);
@@ -770,26 +851,58 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
         }
         continue;
       }
+      if (isReevaluation(c) && eventIsOver(groupEvent)) continue;
+      // Un acceso por persona: cantidad del elemento + acompañantes del negocio.
+      const lineRef = `hubspot:${deal.id}:${c.id}`;
+      const seatTotal = Math.max(1, Math.min(20, Number(c.props.quantity) || 1));
+      const seats = buildSeatNames(attendee.name, companionsRaw, seatTotal);
+      const desired = Array.from({ length: seatTotal }, (_, i) => seats.names[i] || attendee.name);
+      const eventDateLabel = formatEventDateLabel(groupEvent.startDate, groupEvent.endDate);
+      // Qué le falta al contacto en este evento (otros negocios, altas manuales y
+      // asientos previos de este mismo elemento cuentan como cubiertos).
+      const plan = planSeats({
+        tickets: await loadSeatPool({ refId: groupEvent.refId, slug: groupEvent.slug, title: groupEvent.title, dateLabel: eventDateLabel }, true),
+        email,
+        lineRef,
+        desired,
+      });
+      if (plan.capped.length > 0 && !loggedCaps.has(`${lineRef}:${plan.capped.join('|')}`)) {
+        loggedCaps.add(`${lineRef}:${plan.capped.join('|')}`);
+        log(`negocio ${deal.id} · "${c.props.name}": ${plan.capped.join(', ')} no se emite (el elemento ya usó sus ${seatTotal} lugar(es)); para cambiar un nombre usa Asistentes`);
+      }
+      if (plan.missing.length === 0) {
+        if (!c.issued) await markSkipped(c, `${REEVALUATE_SKIP} acceso: ${desired.join(', ')}`);
+        continue;
+      }
       summary.issued += 1;
       if (dryRun) {
-        log(`[dry] negocio ${deal.id} · ${email} · ${label} → invitación al grupo de WhatsApp${advisor ? ` · copia → ${advisor.email}` : ''}`);
+        log(`[dry] negocio ${deal.id} · ${email} · ${label} → ${plan.missing.length} invitación(es) al grupo (${plan.missing.join(', ')})${advisor ? ` · copia → ${advisor.email}` : ''}`);
         continue;
       }
       // Datos para el resumen de compra del correo (igual que el recibo de la web)
       // y para la lista de inscritos.
-      const eventDateLabel = groupEvent
-        ? formatEventDateLabel(groupEvent.startDate, groupEvent.endDate)
-        : formatEventDateLabel(new Date(`${parsed.date}T12:00:00-06:00`));
       const groupMeta = {
-        eventRefId: groupEvent?.refId ?? `${groupKey}-${parsed.date}`,
-        eventSlug: groupEvent?.slug ?? `${groupKey}-${parsed.date}`,
-        eventTitle: groupEvent?.title || label,
+        eventRefId: groupEvent.refId,
+        eventSlug: groupEvent.slug,
+        eventTitle: groupEvent.title || label,
         eventDate: eventDateLabel,
         amount: Number(c.props.price) || 0,
         advisorName: advisor && advisor.email !== email ? advisor.name : '',
       };
-      const card = await issueGroupInvite({ ref: `hubspot:${deal.id}:${c.id}`, key: groupKey, email, name: attendee.name, groupUrl: groupEvent?.groupUrl, strict: true, ...groupMeta });
-      if (!card) continue;
+      const cards: Awaited<ReturnType<typeof issueGroupInvite>>[] = [];
+      for (let i = 0; i < plan.missing.length; i += 1) {
+        // El primer asiento conserva la referencia de siempre; los demás llevan #n.
+        const seatNo = plan.sameLineCount + i + 1;
+        cards.push(await issueGroupInvite({
+          ref: seatNo === 1 ? lineRef : `${lineRef}#${seatNo}`,
+          key: groupKey, email, name: plan.missing[i], groupUrl: groupEvent.groupUrl, strict: true, ...groupMeta,
+        }));
+      }
+      const newTokens = cards.filter((x): x is NonNullable<typeof x> => Boolean(x)).map((x) => x.token);
+      if (newTokens.length === 0) continue;
+      const prev = c.issued ?? c.pending;
+      const prevTokens = c.issued?.inviteTokens?.length ? c.issued.inviteTokens : c.issued?.inviteToken ? [c.issued.inviteToken] : [];
+      const allTokens = [...prevTokens, ...newTokens];
       const fields = {
         status: 'issued' as const,
         reason: '',
@@ -797,26 +910,34 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
         attendeeEmail: email,
         attendeeName: attendee.name,
         groupKey,
-        inviteToken: card.token,
-        eventTitle: groupEvent?.title || label,
+        seatsV2: true,
+        inviteToken: allTokens[0],
+        inviteTokens: allTokens,
+        // Con asientos agregados a un elemento ya emitido el correo lleva solo los nuevos.
+        mailTokens: c.issued ? newTokens : [],
+        mailFolios: [] as string[],
+        eventTitle: groupEvent.title || label,
         eventDateLabel,
-        eventFormat: groupEvent?.location ? `Online · ${groupEvent.location}` : 'Online',
+        eventFormat: groupEvent.location ? `Online · ${groupEvent.location}` : 'Online',
         amount: Number(c.props.price) || 0,
         ...advisorFields,
         emailSentAt: null,
         emailAttempts: 0,
       };
       let groupRecord: IHubspotSyncDocument;
-      if (c.pending) {
-        Object.assign(c.pending, fields);
-        groupRecord = await c.pending.save();
+      if (prev) {
+        Object.assign(prev, fields);
+        groupRecord = await prev.save();
       } else {
         groupRecord = await HubspotSync.create({ kind: 'item', dealId: deal.id, lineItemId: c.id, ...fields });
       }
-      log(`negocio ${deal.id} · ${email} · invitación al grupo de ${label}`);
+      log(`negocio ${deal.id} · ${email} · ${c.issued ? 'cambio de cantidad/acompañantes: ' : ''}${newTokens.length} invitación(es) al grupo de ${label} (${plan.missing.join(', ')})`);
       if (await deliverGroupEmail(groupRecord)) summary.emailsSent += 1;
       continue;
     }
+
+    // Antes era un grupo y ya no se resuelve (evento cambiado/sin enlace): no se toca.
+    if (c.issued?.groupKey) continue;
 
     // Online sin grupo resuelto arriba. Una venta no se pierde en silencio: si el
     // evento aún no existe en la web o es online pero sin enlace de WhatsApp,
@@ -824,6 +945,7 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     if (parsed.tier === 'Online' || /online/i.test(parsed.name)) {
       const known = await findEvent(parsed.name, parsed.date);
       if (!known || known.modality === 'online') {
+        if (c.issued) continue;
         summary.pendingEvent += 1;
         const reason = known
           ? `el evento "${known.title}" es online pero no tiene enlace de grupo de WhatsApp`
@@ -855,6 +977,7 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
 
     if (!event) {
       // Sin Event en la DB no se emite boleto (evita QR para eventos mal escritos).
+      if (c.issued) continue;
       summary.pendingEvent += 1;
       if (!c.pending) {
         log(`negocio ${deal.id} · "${c.props.name}" → PENDIENTE: no hay un evento "${parsed.name}" el ${parsed.date} (ni en la DB ni en el calendario); se emite cuando exista`);
@@ -872,25 +995,45 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     const eventSlug = event.slug;
     const eventRefId = event.refId;
 
-    const dup = await findActiveTicketForEvent(email, [eventRefId, eventSlug]);
-    if (dup) { await markSkipped(c, `ya tiene boleto ${dup.folio}`); continue; }
-
+    if (isReevaluation(c) && eventIsOver(event)) continue;
+    // Un boleto por persona: cantidad del elemento + acompañantes del negocio. Se
+    // emiten solo los asientos que faltan: los que este elemento ya emitió, los de
+    // otros negocios del mismo contacto y las altas manuales cuentan como cubiertos.
+    const lineRef = `hubspot:${deal.id}:${c.id}`;
     const seatTotal = Math.max(1, Math.min(20, Number(c.props.quantity) || 1));
     const seats = buildSeatNames(attendee.name, companionsRaw, seatTotal);
-    if (seats.extra > 0) log(`negocio ${deal.id}: hay ${seats.extra} acompañante(s) de más que boletos (${seatTotal}) — se ignoran los últimos`);
+    if (seats.extra > 0 && !c.issued) log(`negocio ${deal.id}: hay ${seats.extra} acompañante(s) de más que boletos (${seatTotal}) — se ignoran los últimos`);
+    const desired = Array.from({ length: seatTotal }, (_, i) => seats.names[i] || attendee.name);
+    const eventDateLabel = formatEventDateLabel(event.startDate, event.endDate);
+    const plan = planSeats({
+      tickets: await loadSeatPool({ refId: eventRefId, slug: eventSlug, title: event.title, dateLabel: eventDateLabel }, false),
+      email,
+      lineRef,
+      desired,
+    });
+    if (plan.capped.length > 0 && !loggedCaps.has(`${lineRef}:${plan.capped.join('|')}`)) {
+      loggedCaps.add(`${lineRef}:${plan.capped.join('|')}`);
+      log(`negocio ${deal.id} · "${c.props.name}": ${plan.capped.join(', ')} no se emite (el elemento ya usó sus ${seatTotal} lugar(es)); para cambiar un nombre usa Asistentes`);
+    }
+    if (plan.missing.length === 0) {
+      if (!c.issued) await markSkipped(c, `${REEVALUATE_SKIP} boleto(s): ${desired.join(', ')}`);
+      continue;
+    }
     summary.issued += 1;
     if (dryRun) {
-      log(`[dry] negocio ${deal.id} · ${email} · ${parsed.name} ${parsed.date} · ${parsed.tier} × ${seatTotal}${advisor ? ` · copia → ${advisor.email}` : ''}`);
+      log(`[dry] negocio ${deal.id} · ${email} · ${parsed.name} ${parsed.date} · ${parsed.tier} × ${plan.missing.length} (${plan.missing.join(', ')})${advisor ? ` · copia → ${advisor.email}` : ''}`);
       continue;
     }
 
     const tickets = await createTicketsForExternalSale({
-      externalRef: `hubspot:${deal.id}:${c.id}`,
-      seatTotal,
+      externalRef: lineRef,
+      seatTotal: plan.missing.length,
+      firstSeatIndex: plan.sameLineCount + 1,
+      overallTotal: plan.sameLineCount + plan.missing.length,
       eventRefId,
       eventSlug,
       eventTitle: event.title,
-      eventDate: formatEventDateLabel(event.startDate, event.endDate),
+      eventDate: eventDateLabel,
       eventFormat: event.location ? `Presencial · ${event.location}` : 'Presencial',
       attendee,
       amount: Number(c.props.price) || 0,
@@ -898,27 +1041,34 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
       purchasedAt: deal.closedAt ?? new Date(deal.modifiedMs).toISOString(),
       ticketType: parsed.tier,
       advisorName: advisor && advisor.email !== email ? advisor.name : '',
-      ...(seats.names.length > 0 && { seatNames: seats.names }),
+      seatNames: plan.missing,
     });
+    if (plan.sameLineCount > 0) await bumpSeatTotal(lineRef, plan.sameLineCount + plan.missing.length);
+    const newFolios = tickets.map((t) => t.folio);
     const issuedFields = {
       status: 'issued' as const,
       reason: '',
       productName: String(c.props.name ?? ''),
       attendeeEmail: email,
       attendeeName: attendee.name,
-      folios: tickets.map((t) => t.folio),
+      seatsV2: true,
+      folios: [...(c.issued?.folios ?? []), ...newFolios],
+      // Con asientos agregados a un elemento ya emitido el correo lleva solo los nuevos.
+      mailFolios: c.issued ? newFolios : [],
+      mailTokens: [] as string[],
       emailSentAt: null,
       emailAttempts: 0,
       ...advisorFields,
     };
     let record: IHubspotSyncDocument;
-    if (c.pending) {
-      Object.assign(c.pending, issuedFields);
-      record = await c.pending.save();
+    const prev = c.issued ?? c.pending;
+    if (prev) {
+      Object.assign(prev, issuedFields);
+      record = await prev.save();
     } else {
       record = await HubspotSync.create({ kind: 'item', dealId: deal.id, lineItemId: c.id, ...issuedFields });
     }
-    log(`negocio ${deal.id} · ${email} · ${tickets.map((t) => t.folio).join(', ')}`);
+    log(`negocio ${deal.id} · ${email} · ${c.issued ? 'cambio de cantidad/acompañantes: ' : ''}${newFolios.join(', ')} (${plan.missing.join(', ')})`);
     if (await deliverEmail(record)) summary.emailsSent += 1;
   }
   return 'ok';
@@ -958,6 +1108,41 @@ const reprocessPendingEvents = async (summary: SyncSummary): Promise<void> => {
       const msg = (err as Error).message;
       if (msg.includes('HubSpot 404')) { await close(records, 'el negocio ya no existe en HubSpot'); continue; }
       log(`pendiente negocio ${dealId}: error — ${msg}`);
+    }
+  }
+};
+
+// Cambiar la cantidad o los acompañantes de un elemento ya procesado no siempre
+// mueve la fecha de modificación del negocio. Por eso, durante unos días, los
+// negocios con elementos emitidos (o omitidos por duplicado) se vuelven a revisar
+// cada cierto tiempo: si falta algún asiento se emite solo ese.
+const RECHECK_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const RECHECK_EVERY_MS = 10 * 60 * 1000;
+const dealRecheckedAt = new Map<string, number>();
+
+const recheckEmittedDeals = async (summary: SyncSummary): Promise<void> => {
+  const records = (await HubspotSync.find({ kind: 'item' })).filter(
+    (r) =>
+      r.dealId
+      && Date.now() - new Date(String(r.createdAt)).getTime() <= RECHECK_WINDOW_MS
+      && (r.status === 'issued' || (r.status === 'skipped' && String(r.reason ?? '').startsWith(REEVALUATE_SKIP))),
+  );
+  const dealIds = [...new Set(records.map((r) => r.dealId as string))];
+  for (const dealId of dealIds) {
+    if (Date.now() - (dealRecheckedAt.get(dealId) ?? 0) < RECHECK_EVERY_MS) continue;
+    dealRecheckedAt.set(dealId, Date.now());
+    try {
+      const data = await hs(`/crm/v3/objects/deals/${dealId}?properties=dealstage,pipeline,hs_lastmodifieddate,closedate,hubspot_owner_id`);
+      const p = data.properties ?? {};
+      // Un negocio que salió de Exitoso no emite nada nuevo.
+      if (p.pipeline !== env.hubspot.pipelineId || p.dealstage !== env.hubspot.wonStageId) continue;
+      await processDeal(
+        { id: dealId, modifiedMs: new Date(p.hs_lastmodifieddate ?? Date.now()).getTime(), closedAt: p.closedate ?? null, ownerId: p.hubspot_owner_id ?? null },
+        false,
+        summary,
+      );
+    } catch (err) {
+      log(`revisión del negocio ${dealId}: error — ${(err as Error).message.slice(0, 200)}`);
     }
   }
 };
@@ -1024,6 +1209,7 @@ const runSyncCycle = async (opts: { dryRun?: boolean; since?: string } = {}): Pr
     state.lastRunAt = new Date().toISOString();
     await state.save();
     await reprocessPendingEvents(summary);
+    await recheckEmittedDeals(summary);
   }
   return summary;
 };

@@ -44,8 +44,9 @@ export interface AdminTicket extends PublicTicket {
   attendeePhone: string;
   orderId: string;
   checkedInBy: string | null;
-  // 'hubspot' = venta cerrada por un asesor; 'web' = compra en la página.
-  source: 'hubspot' | 'web';
+  // 'hubspot' = venta cerrada por un asesor; 'web' = compra en la página;
+  // 'manual' = alta hecha por un admin desde Asistentes.
+  source: 'hubspot' | 'web' | 'manual';
   advisorName: string;
 }
 
@@ -87,12 +88,12 @@ export const toAdminTicket = (t: IEventTicketDocument): AdminTicket => ({
   attendeePhone: t.attendeePhone,
   orderId: t.orderId,
   checkedInBy: t.checkedInBy,
-  source: isHubspotOrderId(t.orderId) ? 'hubspot' : 'web',
+  source: isHubspotOrderId(t.orderId) ? 'hubspot' : /^manual:/i.test(t.orderId) ? 'manual' : 'web',
   advisorName: t.advisorName ?? '',
   accessType: t.accessType === 'online' ? 'online' : 'ticket',
 });
 
-const syncSheetBestEffort = async (ticket: IEventTicketDocument, mode: 'append' | 'update'): Promise<void> => {
+export const syncSheetBestEffort = async (ticket: IEventTicketDocument, mode: 'append' | 'update'): Promise<void> => {
   if (!attendanceSheet.isAttendanceSheetEnabled()) return;
   try {
     const result = mode === 'append'
@@ -195,6 +196,10 @@ interface TicketBatchInput {
   // boletos conservan el correo del contacto.
   seatNames?: string[];
   accessType?: 'ticket' | 'online';
+  // Para agregar asientos a un elemento ya emitido: número del primer asiento
+  // nuevo y total de asientos del elemento (para "2/3").
+  firstSeatIndex?: number;
+  overallTotal?: number;
 }
 
 // Crea un boleto por asiento y los agrega al Google Sheet de asistencia.
@@ -202,7 +207,8 @@ const issueTickets = async (input: TicketBatchInput): Promise<IEventTicketDocume
   const sheetTab = attendanceSheet.buildTabTitle(input.eventTitle, input.eventDate);
   const created: IEventTicketDocument[] = [];
 
-  for (let seat = 1; seat <= input.seatTotal; seat += 1) {
+  for (let i = 0; i < input.seatTotal; i += 1) {
+    const seat = (input.firstSeatIndex ?? 1) + i;
     let folio = generateFolio(input.eventTitle);
     // Colisión improbable (32^6) pero barata de evitar.
     while (await EventTicket.findOne({ folio })) folio = generateFolio(input.eventTitle);
@@ -213,13 +219,13 @@ const issueTickets = async (input: TicketBatchInput): Promise<IEventTicketDocume
       orderId: input.orderId,
       orderItemIndex: input.orderItemIndex,
       seatIndex: seat,
-      seatTotal: input.seatTotal,
+      seatTotal: input.overallTotal ?? input.seatTotal,
       eventRefId: input.eventRefId,
       eventSlug: input.eventSlug,
       eventTitle: input.eventTitle,
       eventDate: input.eventDate,
       eventFormat: input.eventFormat,
-      attendeeName: input.seatNames?.[seat - 1]?.trim() || input.attendee.name,
+      attendeeName: input.seatNames?.[i]?.trim() || input.attendee.name,
       attendeeEmail: input.attendee.email,
       attendeePhone: input.attendee.phone,
       amount: input.amount,
@@ -338,6 +344,32 @@ export const findActiveTicketForEvent = async (
     && t.accessType !== 'online'
     && (t.attendeeEmail || '').trim().toLowerCase() === target
     && (wanted.has(t.eventRefId) || wanted.has(t.eventSlug))) ?? null;
+};
+
+// Boletos de un evento para conciliar asientos (ver seat-plan.helper). Se toman
+// los de la edición por id/slug o por título + fecha, y solo del mismo tipo de
+// acceso: boletos con QR (presencial) o inscritos online (grupo de WhatsApp).
+export const loadSeatPool = async (
+  event: { refId: string; slug: string; title: string; dateLabel: string },
+  online: boolean,
+): Promise<IEventTicketDocument[]> => {
+  const keys = new Set([event.refId, event.slug].filter(Boolean));
+  const edition = editionKey(event.title, event.dateLabel);
+  return (await EventTicket.find({})).filter(
+    (t) =>
+      (t.accessType === 'online') === online
+      && (keys.has(t.eventRefId) || keys.has(t.eventSlug) || matchesEdition(t, edition)),
+  );
+};
+
+// Tras agregar asientos a un elemento, los anteriores muestran el total nuevo ("1/2").
+export const bumpSeatTotal = async (orderId: string, total: number): Promise<void> => {
+  const own = (await EventTicket.find({ orderId })).filter((t) => t.seatTotal < total);
+  for (const t of own) {
+    t.seatTotal = total;
+    await t.save();
+    await syncSheetBestEffort(t, 'update');
+  }
 };
 
 export const getTicketsForOrder = async (orderId: string): Promise<IEventTicketDocument[]> =>
@@ -549,7 +581,8 @@ export const listEventAttendees = async (eventIdOrSlug: string) => {
   return {
     event: { id: event ? String(event._id) : ref, slug: event?.slug || first?.eventSlug || '', title, startDate, dateLabel: first?.eventDate || '' },
     summary: {
-      total: tickets.length,
+      // Los dados de baja se muestran en la lista pero no cuentan como inscritos.
+      total: tickets.filter((t) => t.status !== TICKET_STATUS.VOID).length,
       checkedIn: tickets.filter((t) => t.status === TICKET_STATUS.USED).length,
     },
     sheetUrl,

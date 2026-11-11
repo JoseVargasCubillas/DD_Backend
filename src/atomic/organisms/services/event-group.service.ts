@@ -166,7 +166,9 @@ export const issueGroupInvite = async (input: {
 // Arma la tarjeta (enlace + QR) de una invitación ya emitida; sirve también
 // para reintentar un correo que falló.
 // `label` (título del evento) solo aplica a los grupos genéricos ('event').
-export const cardFromToken = async (token: string, key: GroupKey, label?: string): Promise<GroupInviteCard> => {
+// `suffix` (nombre del asistente) distingue las tarjetas cuando un correo lleva
+// varios asientos.
+export const cardFromToken = async (token: string, key: GroupKey, label?: string, suffix?: string): Promise<GroupInviteCard> => {
   const joinUrl = buildGroupJoinUrl(token);
   const qrPng = await QRCode.toBuffer(joinUrl, {
     type: 'png',
@@ -175,7 +177,8 @@ export const cardFromToken = async (token: string, key: GroupKey, label?: string
     width: 480,
     color: { dark: '#17130f', light: '#ffffff' },
   });
-  return { label: (key === 'event' && label?.trim()) || GROUPS[key].label, joinUrl, qrCid: `grp-${token.slice(0, 12)}@diegodiaz.mx`, qrPng, token };
+  const base = (key === 'event' && label?.trim()) || GROUPS[key].label;
+  return { label: suffix?.trim() ? `${base} · ${suffix.trim()}` : base, joinUrl, qrCid: `grp-${token.slice(0, 12)}@diegodiaz.mx`, qrPng, token };
 };
 
 // Canjea el enlace: la primera vez resuelve al grupo real; después queda usado.
@@ -183,7 +186,7 @@ export const redeemGroupInvite = async (
   token: string,
 ): Promise<{ status: 'ok'; url: string } | { status: 'invalid' | 'used' }> => {
   const invite = await EventGroupInvite.findOne({ token });
-  if (!invite) return { status: 'invalid' };
+  if (!invite || invite.revokedAt) return { status: 'invalid' };
   if (invite.usedAt) return { status: 'used' };
 
   const url = invite.groupUrl?.trim() || resolveGroupUrl(invite.groupKey as GroupKey);
