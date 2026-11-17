@@ -24,6 +24,7 @@ app.use(
       callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
+    exposedHeaders: ['Content-Disposition'],
   }),
 );
 app.use(morgan('dev'));

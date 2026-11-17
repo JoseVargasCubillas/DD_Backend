@@ -1237,34 +1237,51 @@ export const sendEstrategiaFiscalDossierEmail = (
     phone?: string;
     dossierPath: string;
     dossierFilename: string;
+    onlineDossierPath?: string;
+    onlineDossierFilename?: string;
   },
-): Promise<unknown> =>
-  sendWithAttachments(
+): Promise<unknown> => {
+  const hasOnline = Boolean(input.onlineDossierPath && input.onlineDossierFilename);
+  const resourceRows: [string, string][] = [
+    ['Presencial · CDMX', input.dossierFilename],
+    ...(hasOnline ? [['Online', input.onlineDossierFilename as string] as [string, string]] : []),
+  ];
+  return sendWithAttachments(
     input.email,
-    'Tu dossier del Seminario Estrategia Fiscal — Diego Díaz',
+    hasOnline
+      ? 'Tus dossiers del Seminario Estrategia Fiscal — Diego Díaz'
+      : 'Tu dossier del Seminario Estrategia Fiscal — Diego Díaz',
     emailShell({
       eyebrow: 'Dossier · Estrategia Fiscal',
-      badge: 'PDF · Seminario',
-      title: `Aquí está tu dossier<br/>de Estrategia ${accent('Fiscal.')}`,
-      lead: input.name
-        ? `Hola ${input.name}, adjuntamos el dossier oficial del Seminario de Estrategia Fiscal.`
-        : 'Adjuntamos el dossier oficial del Seminario de Estrategia Fiscal.',
+      badge: hasOnline ? 'PDF · Presencial + Online' : 'PDF · Seminario',
+      title: hasOnline
+        ? `Aquí están tus dossiers<br/>de Estrategia ${accent('Fiscal.')}`
+        : `Aquí está tu dossier<br/>de Estrategia ${accent('Fiscal.')}`,
+      lead: hasOnline
+        ? input.name
+          ? `Hola ${input.name}, adjuntamos el dossier del Seminario presencial en CDMX y el de la Capacitación online.`
+          : 'Adjuntamos el dossier del Seminario presencial en CDMX y el de la Capacitación online.'
+        : input.name
+          ? `Hola ${input.name}, adjuntamos el dossier oficial del Seminario de Estrategia Fiscal.`
+          : 'Adjuntamos el dossier oficial del Seminario de Estrategia Fiscal.',
       content: `
         <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
-          En este material encontrarás la información base del seminario, el enfoque de trabajo y los puntos clave para decidir si esta edición encaja con el momento fiscal de tu empresa.
+          En este material encontrarás la información base del seminario, el enfoque de trabajo y los puntos clave para decidir qué formato encaja con el momento fiscal de tu empresa.
         </p>
         <p style="margin:0 0 18px;color:#5f574f;font-size:14px;line-height:1.7;">
-          Guardamos tus datos para poder dar seguimiento a tu solicitud del dossier. Si quieres reservar tu lugar, responde este correo y el equipo te orienta.
+          Guardamos tus datos para poder dar seguimiento a tu solicitud. Si quieres reservar tu lugar, responde este correo y el equipo te orienta.
         </p>
         ${detailRows([
-          ['Recurso', input.dossierFilename],
+          ...resourceRows,
           ['Correo', input.email],
           ...(input.phone ? [['Teléfono', input.phone] as [string, string]] : []),
         ])}
       `,
       ctaLabel: 'Ver calendario',
       ctaUrl: `${env.clientUrl}/eventos`,
-      preheader: 'Adjuntamos tu dossier del Seminario de Estrategia Fiscal.',
+      preheader: hasOnline
+        ? 'Adjuntamos tus dossiers (presencial y online) del Seminario de Estrategia Fiscal.'
+        : 'Adjuntamos tu dossier del Seminario de Estrategia Fiscal.',
     }),
     [
       {
@@ -1272,8 +1289,18 @@ export const sendEstrategiaFiscalDossierEmail = (
         path: input.dossierPath,
         contentType: 'application/pdf',
       },
+      ...(hasOnline
+        ? [
+            {
+              filename: input.onlineDossierFilename as string,
+              path: input.onlineDossierPath as string,
+              contentType: 'application/pdf',
+            },
+          ]
+        : []),
     ],
   );
+};
 
 export const sendDownloadableResourceEmail = (
   input: { email: string; name?: string; resourceTitle: string; downloadUrl: string },

@@ -64,6 +64,7 @@ export const requestEstrategiaFiscalDossier: RequestHandler = async (req, res) =
       emailedAt: result.lead.emailedAt,
       emailStatus: result.emailStatus,
       downloadUrl: result.downloadUrl,
+      extraDownloadUrls: result.extraDownloadUrls,
     });
   } catch (err: any) {
     if (err.statusCode === 400) return badRequest(res, err.message);

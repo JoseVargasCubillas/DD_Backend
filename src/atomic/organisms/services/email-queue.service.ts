@@ -130,7 +130,13 @@ const DOSSIER_PATH = path.resolve(
   'assets',
   'seminario-estrategia-fiscal-dossier.pdf',
 );
-const DOSSIER_FILENAME = 'Seminario-Estrategia-Fiscal-Diego-Diaz.pdf';
+const DOSSIER_FILENAME = 'Seminario-Estrategia-Fiscal-Presencial-Diego-Diaz.pdf';
+const DOSSIER_ONLINE_PATH = path.resolve(
+  process.cwd(),
+  'assets',
+  'capacitacion-estrategia-fiscal-online.pdf',
+);
+const DOSSIER_ONLINE_FILENAME = 'Capacitacion-Estrategia-Fiscal-Online-Diego-Diaz.pdf';
 
 const dispatchJob = async (job: IEmailQueueJobDocument): Promise<void> => {
   const payload = (job.payload ?? {}) as Record<string, unknown>;
@@ -158,16 +164,20 @@ const dispatchJob = async (job: IEmailQueueJobDocument): Promise<void> => {
         downloadUrl,
       });
       return;
-    case 'lead_estrategia_dossier':
+    case 'lead_estrategia_dossier': {
       if (!fs.existsSync(DOSSIER_PATH)) throw new Error('dossier no encontrado');
+      const hasOnline = fs.existsSync(DOSSIER_ONLINE_PATH);
       await sendEstrategiaFiscalDossierEmail({
         email: job.toEmail,
         name: job.toName,
         phone: String(payload.phone ?? ''),
         dossierPath: DOSSIER_PATH,
         dossierFilename: DOSSIER_FILENAME,
+        onlineDossierPath: hasOnline ? DOSSIER_ONLINE_PATH : undefined,
+        onlineDossierFilename: hasOnline ? DOSSIER_ONLINE_FILENAME : undefined,
       });
       return;
+    }
     case 'lead_resource_download':
       await sendDownloadableResourceEmail({
         email: job.toEmail,

@@ -24,7 +24,13 @@ const ESTRATEGIA_FISCAL_DOSSIER_PATH = path.resolve(
   'assets',
   'seminario-estrategia-fiscal-dossier.pdf',
 );
-const ESTRATEGIA_FISCAL_DOSSIER_FILENAME = 'Seminario-Estrategia-Fiscal-Diego-Diaz.pdf';
+const ESTRATEGIA_FISCAL_DOSSIER_FILENAME = 'Seminario-Estrategia-Fiscal-Presencial-Diego-Diaz.pdf';
+const ESTRATEGIA_FISCAL_ONLINE_PATH = path.resolve(
+  process.cwd(),
+  'assets',
+  'capacitacion-estrategia-fiscal-online.pdf',
+);
+const ESTRATEGIA_FISCAL_ONLINE_FILENAME = 'Capacitacion-Estrategia-Fiscal-Online-Diego-Diaz.pdf';
 const MEDIA_KIT_URL =
   process.env.MEDIA_KIT_URL ||
   'https://github.com/JoseVargasCubillas/DD_Frontend/releases/download/media-v1/DDMedia-Kit.pdf';
@@ -151,6 +157,8 @@ export interface LeadDeliveryResult {
   lead: ILeadDocument;
   emailStatus: 'delivered' | 'pending';
   downloadUrl?: string;
+  /** Descargas adicionales (p. ej. dossier online junto al presencial). */
+  extraDownloadUrls?: string[];
 }
 
 export const sendSatGuide = async (input: {
@@ -253,7 +261,10 @@ export const sendEstrategiaFiscalDossier = async (input: {
     name: input.name,
     phone,
     source: 'estrategia-fiscal-dossier',
-    meta: { deliveredResource: ESTRATEGIA_FISCAL_DOSSIER_FILENAME },
+    meta: {
+      deliveredResource: ESTRATEGIA_FISCAL_DOSSIER_FILENAME,
+      deliveredResources: [ESTRATEGIA_FISCAL_DOSSIER_FILENAME, ESTRATEGIA_FISCAL_ONLINE_FILENAME],
+    },
   });
 
   if (!fs.existsSync(ESTRATEGIA_FISCAL_DOSSIER_PATH)) {
@@ -261,8 +272,12 @@ export const sendEstrategiaFiscalDossier = async (input: {
     err.statusCode = 500;
     throw err;
   }
+  const hasOnline = fs.existsSync(ESTRATEGIA_FISCAL_ONLINE_PATH);
 
   const downloadUrl = `${publicBase}/api/v1/leads/download/estrategia-fiscal-dossier`;
+  const extraDownloadUrls = hasOnline
+    ? [`${publicBase}/api/v1/leads/download/estrategia-fiscal-online`]
+    : [];
 
   try {
     await sendEstrategiaFiscalDossierEmail({
@@ -271,10 +286,12 @@ export const sendEstrategiaFiscalDossier = async (input: {
       phone: lead.phone,
       dossierPath: ESTRATEGIA_FISCAL_DOSSIER_PATH,
       dossierFilename: ESTRATEGIA_FISCAL_DOSSIER_FILENAME,
+      onlineDossierPath: hasOnline ? ESTRATEGIA_FISCAL_ONLINE_PATH : undefined,
+      onlineDossierFilename: hasOnline ? ESTRATEGIA_FISCAL_ONLINE_FILENAME : undefined,
     });
     lead.emailedAt = new Date();
     await lead.save();
-    return { lead, emailStatus: 'delivered', downloadUrl };
+    return { lead, emailStatus: 'delivered', downloadUrl, extraDownloadUrls };
   } catch (err) {
     if (!IS_EMAIL_TRANSIENT_FAILURE(err)) throw err;
     await scheduleForRetry(
@@ -283,7 +300,7 @@ export const sendEstrategiaFiscalDossier = async (input: {
       { downloadUrl, phone: lead.phone },
       err,
     );
-    return { lead, emailStatus: 'pending', downloadUrl };
+    return { lead, emailStatus: 'pending', downloadUrl, extraDownloadUrls };
   }
 };
 
@@ -364,6 +381,10 @@ export const getDownloadableResource = (
   if (key === 'estrategia-fiscal-dossier') {
     if (!fs.existsSync(ESTRATEGIA_FISCAL_DOSSIER_PATH)) return null;
     return { filePath: ESTRATEGIA_FISCAL_DOSSIER_PATH, filename: ESTRATEGIA_FISCAL_DOSSIER_FILENAME };
+  }
+  if (key === 'estrategia-fiscal-online') {
+    if (!fs.existsSync(ESTRATEGIA_FISCAL_ONLINE_PATH)) return null;
+    return { filePath: ESTRATEGIA_FISCAL_ONLINE_PATH, filename: ESTRATEGIA_FISCAL_ONLINE_FILENAME };
   }
   return null;
 };
