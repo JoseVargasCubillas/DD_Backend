@@ -114,6 +114,8 @@ export const issueGroupInvite = async (input: {
   key: GroupKey;
   email: string;
   name: string;
+  // Teléfono del comprador: va a la lista de asistentes y al Sheet.
+  phone?: string;
   // Enlace del grupo de la edición comprada (campo del evento); sin él, el del .env.
   groupUrl?: string | null;
   // true: exige el enlace propio de la edición (sin respaldo del .env).
@@ -152,7 +154,7 @@ export const issueGroupInvite = async (input: {
         eventSlug: input.eventSlug ?? '',
         eventTitle: input.eventTitle,
         eventDate: input.eventDate ?? '',
-        attendee: { name: input.name, email: invite.email },
+        attendee: { name: input.name, email: invite.email, phone: input.phone },
         amount: input.amount ?? 0,
         advisorName: input.advisorName,
       });

@@ -312,7 +312,16 @@ export const registerOnlineAttendee = async (input: {
   purchasedAt?: Date | string;
 }): Promise<IEventTicketDocument> => {
   const existing = await EventTicket.findOne({ orderId: input.ref });
-  if (existing) return existing;
+  if (existing) {
+    // Registrado antes de guardar el teléfono: se completa y se actualiza el Sheet.
+    const phone = String(input.attendee.phone ?? '').trim();
+    if (phone && !String(existing.attendeePhone ?? '').trim()) {
+      existing.attendeePhone = phone;
+      await existing.save();
+      await syncSheetBestEffort(existing, 'update');
+    }
+    return existing;
+  }
   const [ticket] = await issueTickets({
     orderId: input.ref,
     orderItemIndex: 0,

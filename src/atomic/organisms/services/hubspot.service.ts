@@ -161,6 +161,18 @@ const associatedIds = async (fromType: string, toType: string, id: string): Prom
   return ((row?.to ?? []) as Json[]).map((t) => String(t.toObjectId));
 };
 
+// Contactos asociados a un negocio (correo y teléfono), para completar datos de
+// asistentes ya registrados.
+export const dealContacts = async (dealId: string): Promise<Array<{ email: string; phone: string }>> => {
+  const ids = await associatedIds('deals', 'contacts', dealId);
+  if (ids.length === 0) return [];
+  const rows = await batchRead('contacts', ids, ['email', 'phone', 'mobilephone']);
+  return [...rows.values()].map((c) => ({
+    email: String(c.email ?? '').trim().toLowerCase(),
+    phone: String(c.phone || c.mobilephone || '').trim(),
+  }));
+};
+
 interface WonDeal {
   id: string;
   modifiedMs: number;
@@ -961,6 +973,7 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
         eventDate: eventDateLabel,
         amount: Number(c.props.price) || 0,
         advisorName: advisor && advisor.email !== email ? advisor.name : '',
+        phone: attendee.phone,
       };
       const cards: Awaited<ReturnType<typeof issueGroupInvite>>[] = [];
       for (let i = 0; i < plan.missing.length; i += 1) {

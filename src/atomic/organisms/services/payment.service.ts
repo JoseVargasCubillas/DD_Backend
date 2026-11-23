@@ -276,6 +276,7 @@ const sendReceiptIfEventOrder = async (order: IOrderDocument): Promise<void> => 
           key,
           email: recipient.email,
           name: recipient.name,
+          phone: recipient.phone,
           groupUrl: boughtEvent?.whatsappGroupUrl,
           strict: true,
           eventRefId: boughtEvent ? String(boughtEvent._id) : String(item.refId || ''),
