@@ -4,7 +4,8 @@
  *
  *   · hubspot:<negocio>:<item> → teléfono del contacto del negocio en HubSpot
  *     (el contacto con el mismo correo del asistente; si no, el del negocio)
- *   · web:<orden>:<índice>     → teléfono de contacto de la orden
+ *   · compras web              → teléfono de contacto de la orden; si no hay, el del
+ *     usuario de la orden o de la cuenta con el mismo correo
  *
  * Cubre inscritos online y boletos presenciales. Es idempotente: quien ya tiene
  * teléfono no se toca.
@@ -18,6 +19,7 @@ import '../config/load-env.js';
 import { connectDB } from '../config/database.js';
 import { EventTicket } from '../atomic/molecules/models/event-ticket.model.js';
 import { Order } from '../atomic/molecules/models/order.model.js';
+import { User } from '../atomic/molecules/models/user.model.js';
 import { dealContacts } from '../atomic/organisms/services/hubspot.service.js';
 import { isAttendanceSheetEnabled, syncTicketRow } from '../atomic/organisms/services/attendance-sheet.service.js';
 
@@ -45,12 +47,20 @@ const main = async () => {
           const contacts = dealCache.get(dealId) ?? [];
           const email = (t.attendeeEmail || '').trim().toLowerCase();
           phone = (contacts.find((c) => c.email && c.email === email && c.phone) ?? contacts.find((c) => c.phone))?.phone ?? '';
-        } else if (t.orderId.startsWith('web:')) {
-          const order = await Order.findById(t.orderId.split(':')[1]).then((o) => o, () => null);
-          phone = String(order?.contact?.phone ?? '').trim();
         } else {
-          const order = await Order.findById(t.orderId).then((o) => o, () => null);
+          // Compra web: teléfono de contacto de la orden; si no hay, el del usuario
+          // de la orden y, al final, el de la cuenta con el mismo correo.
+          const orderId = t.orderId.startsWith('web:') ? t.orderId.split(':')[1] : t.orderId;
+          const order = await Order.findById(orderId).then((o) => o, () => null);
           phone = String(order?.contact?.phone ?? '').trim();
+          if (!phone && order?.user) {
+            const user = await User.findById(String(order.user)).then((u) => u, () => null);
+            phone = String(user?.phone ?? '').trim();
+          }
+          if (!phone && t.attendeeEmail) {
+            const user = await User.findOne({ email: t.attendeeEmail.trim().toLowerCase() }).then((u) => u, () => null);
+            phone = String(user?.phone ?? '').trim();
+          }
         }
       } catch (err) {
         console.log(`  ✖ ${t.folio}: no se pudo leer el teléfono — ${(err as Error).message.slice(0, 120)}`);
