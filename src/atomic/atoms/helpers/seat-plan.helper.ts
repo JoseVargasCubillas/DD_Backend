@@ -54,7 +54,8 @@ export const planSeats = (input: {
     (t) =>
       !isSameLine(t.orderId, input.lineRef)
       && t.status !== 'void'
-      && ((t.attendeeEmail || '').trim().toLowerCase() === email || isManualOrder(t.orderId)),
+      // Sin correo (contacto aún sin correo en HubSpot) no se empareja por correo vacío.
+      && ((email !== '' && (t.attendeeEmail || '').trim().toLowerCase() === email) || isManualOrder(t.orderId)),
   );
   const pool = [...sameLine, ...others];
   const used = new Set<SeatLike>();

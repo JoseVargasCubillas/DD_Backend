@@ -86,7 +86,7 @@ const ticketOrigin = (t: IEventTicketDocument): string => {
 const ticketRow = (t: IEventTicketDocument): string[] => [
   t.folio,
   t.attendeeName,
-  t.attendeeEmail,
+  t.attendeeEmail || (t.accessType === 'online' ? '' : '⚠ SIN CORREO · boleto pendiente'),
   t.attendeePhone,
   t.eventTitle,
   t.eventDate,

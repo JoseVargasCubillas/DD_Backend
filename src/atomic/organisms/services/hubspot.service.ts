@@ -339,6 +339,8 @@ export interface SyncSummary {
   retries: number;
   // true si otro proceso ya estaba sincronizando y este ciclo se omitió.
   lockedByOther?: boolean;
+  // Boletos registrados que esperan a que el contacto tenga correo (solo "Sincronizar ahora").
+  awaitingEmail?: number;
 }
 
 const log = (msg: string): void => console.log(`[hubspot-sync] ${msg}`);
@@ -682,10 +684,68 @@ const backfillAdvisor = async (record: IHubspotSyncDocument): Promise<void> => {
   }
 };
 
+// Boletos registrados mientras el contacto no tenía correo: cada ciclo se vuelve
+// a leer el contacto del negocio y, en cuanto tiene correo, se le pone a los
+// boletos (lista de asistentes y Sheet) y sale el correo normal con los QR.
+const AWAITING_EMAIL_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
+const AWAITING_EMAIL_RECHECK_MS = 4 * 60 * 1000;
+const awaitingEmailCache = new Map<string, { at: number; email: string }>();
+
+const attachEmailFromHubspot = async (record: IHubspotSyncDocument): Promise<boolean> => {
+  if (record.attendeeEmail || record.groupKey || !record.dealId) return false;
+  if (Date.now() - new Date(String(record.createdAt)).getTime() > AWAITING_EMAIL_MAX_AGE_MS) return false;
+
+  let found = awaitingEmailCache.get(record.dealId);
+  if (!found || Date.now() - found.at > AWAITING_EMAIL_RECHECK_MS) {
+    const ids = await associatedIds('deals', 'contacts', record.dealId);
+    const contacts = ids.length ? await batchRead('contacts', ids, ['email']) : new Map<string, Json>();
+    const withEmail = [...contacts.values()].find((c) => String(c.email ?? '').includes('@'));
+    found = { at: Date.now(), email: withEmail ? String(withEmail.email).trim().toLowerCase() : '' };
+    awaitingEmailCache.set(record.dealId, found);
+  }
+  if (!found.email) return false;
+
+  const email = found.email;
+  const selfAdvised = record.advisorEmail === email;
+  record.attendeeEmail = email;
+  if (selfAdvised) { record.advisorEmail = ''; record.advisorName = ''; }
+  // Aún no se mandó ningún correo: el primero lleva TODOS los boletos del elemento.
+  record.mailFolios = [];
+  record.emailAttempts = 0;
+  await record.save();
+
+  for (const folio of record.folios ?? []) {
+    const t = await EventTicket.findOne({ folio });
+    if (!t || t.attendeeEmail) continue;
+    t.attendeeEmail = email;
+    if (selfAdvised) t.advisorName = '';
+    await t.save();
+    try {
+      const res = await syncTicketRow(t);
+      if (res && (t.sheetRow !== res.row || t.sheetTab !== res.tab)) {
+        t.sheetRow = res.row;
+        t.sheetTab = res.tab;
+        await t.save();
+      }
+    } catch (err) {
+      log(`no se pudo actualizar el Excel del boleto ${folio}: ${(err as Error).message}`);
+    }
+  }
+  log(`negocio ${record.dealId}: el contacto ya tiene correo (${email}) — se envían los boletos pendientes`);
+  return true;
+};
+
 const retryPendingEmails = async (): Promise<number> => {
   const issued = await HubspotSync.find({ kind: 'item', status: 'issued' });
   let sent = 0;
   for (const record of issued) {
+    if (!record.emailSentAt && !record.attendeeEmail && !record.groupKey) {
+      try {
+        await attachEmailFromHubspot(record);
+      } catch (err) {
+        log(`negocio ${record.dealId}: no se pudo revisar el correo del contacto — ${(err as Error).message.slice(0, 200)}`);
+      }
+    }
     if (!record.emailSentAt) {
       if ((record.emailAttempts ?? 0) < MAX_EMAIL_ATTEMPTS && (await deliverEmail(record))) sent += 1;
       continue;
@@ -759,17 +819,25 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
   const contacts = contactIds.length
     ? await batchRead('contacts', contactIds, ['firstname', 'lastname', 'email', 'phone', 'mobilephone'])
     : new Map<string, Json>();
-  const contact = [...contacts.values()].find((c) => String(c.email ?? '').includes('@'));
+  const contactList = [...contacts.values()];
+  const withEmail = contactList.find((c) => String(c.email ?? '').includes('@'));
+  // Sin ningún contacto asociado no hay a quién registrar: se reintenta. Con un
+  // contacto sin correo SÍ se registra al asistente (boleto "pendiente de correo");
+  // el boleto se manda solo cuando el contacto tenga correo en HubSpot.
+  const contact = withEmail ?? contactList[0];
   if (!contact) {
-    log(`negocio ${deal.id}: sin contacto con correo asociado — se reintenta`);
+    log(`negocio ${deal.id}: sin contacto asociado — se reintenta`);
     return 'retry';
   }
-  const email = String(contact.email).trim().toLowerCase();
+  const email = withEmail ? String(withEmail.email).trim().toLowerCase() : '';
+  const awaitingEmail = !email;
   const attendee = {
-    name: `${contact.firstname ?? ''} ${contact.lastname ?? ''}`.trim() || email.split('@')[0],
+    name: `${contact.firstname ?? ''} ${contact.lastname ?? ''}`.trim() || (email ? email.split('@')[0] : 'Sin nombre'),
     email,
     phone: String(contact.phone || contact.mobilephone || ''),
   };
+  // Un elemento de grupo online (WhatsApp) sí necesita el correo para emitirse.
+  let needsRetry = false;
 
   // Asesor asignado (propietario del negocio): recibirá copia del correo del cliente.
   const advisor = await getAdvisor(deal.ownerId);
@@ -835,6 +903,11 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
       }
     }
     if (groupKey) {
+      if (awaitingEmail) {
+        log(`negocio ${deal.id} · "${c.props.name}": el contacto no tiene correo — la invitación al grupo se reintenta`);
+        needsRetry = true;
+        continue;
+      }
       const label = groupKey === 'event' ? groupEvent?.title || parsed.name : groupLabel(groupKey);
       if (!isGroupConfigured(groupKey, groupEvent?.groupUrl, true) || !groupEvent) {
         if (c.issued) continue; // ya emitido: no se vuelve a marcar pendiente
@@ -1021,7 +1094,7 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     }
     summary.issued += 1;
     if (dryRun) {
-      log(`[dry] negocio ${deal.id} · ${email} · ${parsed.name} ${parsed.date} · ${parsed.tier} × ${plan.missing.length} (${plan.missing.join(', ')})${advisor ? ` · copia → ${advisor.email}` : ''}`);
+      log(`[dry] negocio ${deal.id} · ${email || 'SIN CORREO (boleto pendiente)'} · ${parsed.name} ${parsed.date} · ${parsed.tier} × ${plan.missing.length} (${plan.missing.join(', ')})${advisor ? ` · copia → ${advisor.email}` : ''}`);
       continue;
     }
 
@@ -1068,10 +1141,16 @@ const processDeal = async (deal: WonDeal, dryRun: boolean, summary: SyncSummary)
     } else {
       record = await HubspotSync.create({ kind: 'item', dealId: deal.id, lineItemId: c.id, ...issuedFields });
     }
+    if (awaitingEmail) {
+      // Registrado en la lista de asistentes y en el Sheet, pero sin correo no se
+      // manda nada: retryPendingEmails lo detecta cuando HubSpot ya tenga el correo.
+      log(`negocio ${deal.id} · "${attendee.name}" SIN CORREO — ${newFolios.join(', ')} (${plan.missing.join(', ')}) registrado como boleto pendiente; se envía cuando el contacto tenga correo en HubSpot`);
+      continue;
+    }
     log(`negocio ${deal.id} · ${email} · ${c.issued ? 'cambio de cantidad/acompañantes: ' : ''}${newFolios.join(', ')} (${plan.missing.join(', ')})`);
     if (await deliverEmail(record)) summary.emailsSent += 1;
   }
-  return 'ok';
+  return needsRetry ? 'retry' : 'ok';
 };
 
 const PENDING_EVENT_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000;
@@ -1271,6 +1350,12 @@ export const startHubspotSyncWorker = (): void => {
   console.log(`[hubspot-sync] worker iniciado (cada ${Math.round(env.hubspot.pollIntervalMs / 1000)} s)`);
 };
 
+// Boletos presenciales registrados sin correo (esperan a que HubSpot lo tenga).
+const countAwaitingEmail = (items: IHubspotSyncDocument[]): number =>
+  items
+    .filter((i) => i.status === 'issued' && !i.groupKey && !i.attendeeEmail && !i.emailSentAt)
+    .reduce((sum, i) => sum + Math.max(1, i.folios?.length ?? 0), 0);
+
 // Estado para el panel de admin.
 export const getHubspotStatus = async (): Promise<{
   enabled: boolean;
@@ -1279,10 +1364,12 @@ export const getHubspotStatus = async (): Promise<{
   cursor: string | null;
   pendingEvent: number;
   issued: number;
+  awaitingEmail: number;
 }> => {
   const state = await loadState();
   const items = await HubspotSync.find({ kind: 'item' });
   return {
+    awaitingEmail: countAwaitingEmail(items),
     enabled: Boolean(env.hubspot.token) && env.hubspot.syncEnabled,
     intervalSec: Math.round(env.hubspot.pollIntervalMs / 1000),
     lastRunAt: state?.lastRunAt ?? null,
@@ -1301,5 +1388,6 @@ export const runHubspotSyncNow = async (): Promise<SyncSummary> => {
   if (!env.hubspot.syncEnabled) {
     throw Object.assign(new Error('La sincronización con HubSpot está en pausa (HUBSPOT_SYNC_ENABLED=false).'), { statusCode: 409 });
   }
-  return runHubspotSyncOnce();
+  const summary = await runHubspotSyncOnce();
+  return { ...summary, awaitingEmail: countAwaitingEmail(await HubspotSync.find({ kind: 'item' })) };
 };
