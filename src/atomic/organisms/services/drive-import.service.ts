@@ -4,6 +4,7 @@ import { Module } from '../../molecules/models/module.model.js';
 import { Lesson } from '../../molecules/models/lesson.model.js';
 import { COURSE_STATUS } from '../../atoms/constants/status.constant.js';
 import { env } from '../../../config/env.js';
+import { syncCourseIntoActivePackages } from './package.service.js';
 
 interface DriveResourceInput {
   name: string;
@@ -386,6 +387,13 @@ export const importDriveCourses = async ({ courses, instructor, status = COURSE_
 
     course.totalLessons = (course.lessons ?? []).length;
     await course.save();
+
+    // Un curso importado directamente como "published" (o que ya lo era) no
+    // pasa por course.service.updateCourse, así que sin esto se queda fuera
+    // de los paquetes activos de Academia aunque ya tenga contenido.
+    if (course.status === COURSE_STATUS.PUBLISHED) {
+      await syncCourseIntoActivePackages(String(course._id)).catch(() => undefined);
+    }
   }
 
   return result;
