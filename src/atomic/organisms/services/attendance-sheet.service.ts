@@ -167,23 +167,133 @@ export const ensureEventTab = async (title: string): Promise<number> => {
   return sheetId;
 };
 
+// Escrituras concurrentes a la misma pestaña se serializan para que dos boletos
+// no calculen la misma "siguiente fila".
+const tabLocks = new Map<string, Promise<unknown>>();
+const withTabLock = <T>(tab: string, fn: () => Promise<T>): Promise<T> => {
+  const key = tabKey(tab);
+  const prev = tabLocks.get(key) ?? Promise.resolve();
+  const next = prev.catch(() => undefined).then(fn);
+  tabLocks.set(key, next);
+  return next.finally(() => { if (tabLocks.get(key) === next) tabLocks.delete(key); });
+};
+
 // Agrega la fila del boleto y devuelve el número de fila (1-based) donde quedó.
+// No usa values.append: su detección de "tablas" hace que una celda suelta
+// (p. ej. un "." fuera de A:N) desplace las filas nuevas a otras columnas. Se
+// calcula la siguiente fila libre a partir de la última fila con datos en A:N
+// y se escribe siempre desde la columna A.
 export const appendTicketRow = async (ticket: IEventTicketDocument): Promise<{ tab: string; row: number } | null> => {
   if (!SHEET_ID) return null;
   const wanted = ticket.sheetTab || buildTabTitle(ticket.eventTitle, ticket.eventDate);
   await ensureEventTab(wanted);
   const tab = actualTabName(wanted);
-  const res = await getSheets().spreadsheets.values.append({
-    spreadsheetId: SHEET_ID,
-    range: `'${tab}'!A:${LAST_COL_LETTER}`,
-    valueInputOption: 'RAW',
-    insertDataOption: 'INSERT_ROWS',
-    requestBody: { values: [ticketRow(ticket)] },
+  return withTabLock(tab, async () => {
+    const sheets = getSheets();
+    const current = await sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `'${tab}'!A:${LAST_COL_LETTER}`,
+    });
+    // values.get recorta filas vacías del final, así que length = última fila con datos.
+    const row = Math.max((current.data.values ?? []).length + 1, 2);
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: `'${tab}'!A${row}:${LAST_COL_LETTER}${row}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [ticketRow(ticket)] },
+    });
+    return { tab, row };
   });
-  const updatedRange = res.data.updates?.updatedRange ?? '';
-  const match = updatedRange.match(/![A-Z]+(\d+)/);
-  const row = match ? Number(match[1]) : 0;
-  return { tab, row };
+};
+
+export interface SheetResyncResult {
+  folio: string;
+  tab: string;
+  row: number;
+  action: 'updated' | 'added';
+}
+
+// Reescribe en el Sheet todos los boletos dados (botón "Reenviar al Sheet" de la
+// lista de asistentes). Por pestaña: lee A:N una vez, ubica cada boleto por
+// folio en la columna A; si no está, usa su sheetRow guardado cuando esa fila
+// está libre, y si no, la siguiente fila libre. Escribe todo en una sola
+// llamada (y el color en otra) para no agotar la cuota de la API con eventos
+// grandes. Las filas repetidas del mismo folio se vacían.
+export const resyncTickets = async (tickets: IEventTicketDocument[]): Promise<SheetResyncResult[]> => {
+  if (!SHEET_ID || tickets.length === 0) return [];
+  const byTab = new Map<string, IEventTicketDocument[]>();
+  for (const t of tickets) {
+    const wanted = t.sheetTab || buildTabTitle(t.eventTitle, t.eventDate);
+    byTab.set(wanted, [...(byTab.get(wanted) ?? []), t]);
+  }
+
+  const results: SheetResyncResult[] = [];
+  for (const [wanted, group] of byTab) {
+    const sheetId = await ensureEventTab(wanted);
+    const tab = actualTabName(wanted);
+    await withTabLock(tab, async () => {
+      const sheets = getSheets();
+      const current = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `'${tab}'!A:${LAST_COL_LETTER}` });
+      const values = current.data.values ?? [];
+      const folioRows = new Map<string, number[]>();
+      values.forEach((r, i) => {
+        const folio = String(r[0] ?? '').trim().toUpperCase();
+        if (i > 0 && folio) folioRows.set(folio, [...(folioRows.get(folio) ?? []), i + 1]);
+      });
+      const isFree = (row: number): boolean => (values[row - 1] ?? []).every((c) => String(c ?? '').trim() === '');
+      const taken = new Set<number>();
+      let nextFree = Math.max(values.length + 1, 2);
+
+      const data: sheets_v4.Schema$ValueRange[] = [];
+      const format: sheets_v4.Schema$Request[] = [];
+      const clearRanges: string[] = [];
+      for (const t of group) {
+        const found = folioRows.get(t.folio.toUpperCase()) ?? [];
+        let row = found[0];
+        let action: SheetResyncResult['action'] = 'updated';
+        // Solo filas libres dentro de la zona con datos: las de más abajo podrían
+        // chocar con las que se agregan al final.
+        const saved = t.sheetTab && tabKey(t.sheetTab) === tabKey(tab) ? t.sheetRow : null;
+        if (!row && saved && saved >= 2 && saved <= values.length && isFree(saved) && !taken.has(saved)) row = saved;
+        if (!row) {
+          row = nextFree++;
+          action = 'added';
+        }
+        taken.add(row);
+        // Mismo folio en varias filas: se queda la primera, las demás se vacían.
+        for (const dup of found.slice(1)) clearRanges.push(`'${tab}'!A${dup}:${LAST_COL_LETTER}${dup}`);
+
+        data.push({ range: `'${tab}'!A${row}:${LAST_COL_LETTER}${row}`, values: [ticketRow(t)] });
+        format.push(
+          {
+            repeatCell: {
+              range: { sheetId, startRowIndex: row - 1, endRowIndex: row, startColumnIndex: 0, endColumnIndex: HEADERS.length },
+              cell: { userEnteredFormat: { backgroundColor: t.status === 'used' ? GREEN : WHITE } },
+              fields: 'userEnteredFormat.backgroundColor',
+            },
+          },
+          {
+            repeatCell: {
+              range: { sheetId, startRowIndex: row - 1, endRowIndex: row, startColumnIndex: STATUS_COL, endColumnIndex: STATUS_COL + 1 },
+              cell: { userEnteredFormat: { textFormat: { bold: t.status === 'used' } } },
+              fields: 'userEnteredFormat.textFormat.bold',
+            },
+          },
+        );
+        results.push({ folio: t.folio, tab, row, action });
+      }
+
+      if (clearRanges.length) {
+        await sheets.spreadsheets.values.batchClear({ spreadsheetId: SHEET_ID, requestBody: { ranges: clearRanges } });
+      }
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: SHEET_ID,
+        requestBody: { valueInputOption: 'RAW', data },
+      });
+      await sheets.spreadsheets.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { requests: format } });
+    });
+  }
+  return results;
 };
 
 // Localiza la fila por folio cuando no se guardó sheetRow (p. ej. si el

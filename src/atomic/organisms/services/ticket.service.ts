@@ -573,13 +573,17 @@ export const undoCheckIn = async (rawFolio: string): Promise<AdminTicket | null>
   return toAdminTicket(ticket);
 };
 
-export const listEventAttendees = async (eventIdOrSlug: string) => {
+// Boletos de un evento (id de Event o slug de catálogo), más recientes primero.
+export const findEventTickets = async (eventIdOrSlug: string) => {
   const ref = String(eventIdOrSlug || '').trim();
   const event = UUID_RE.test(ref) ? await Event.findById(ref) : await Event.findOne({ slug: ref });
   const keys = new Set([ref, event?.slug, event ? String(event._id) : ''].filter(Boolean));
-
   const all = await EventTicket.find({}).sort({ purchasedAt: -1 });
-  const tickets = all.filter((t) => keys.has(t.eventRefId) || keys.has(t.eventSlug));
+  return { ref, event, tickets: all.filter((t) => keys.has(t.eventRefId) || keys.has(t.eventSlug)) };
+};
+
+export const listEventAttendees = async (eventIdOrSlug: string) => {
+  const { ref, event, tickets } = await findEventTickets(eventIdOrSlug);
 
   const first = tickets[0];
   const title = event?.title || first?.eventTitle || ref;

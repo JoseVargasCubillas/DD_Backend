@@ -15,13 +15,14 @@ import { EventGroupInvite } from '../../molecules/models/event-group-invite.mode
 import { buildTicketUrl } from '../../atoms/helpers/ticket-token.helper.js';
 import { formatEventDateLabel, formatEventFormatLabel, formatTicketOrderRef } from '../../atoms/helpers/event-ticket.helper.js';
 import { planSeats } from '../../atoms/helpers/seat-plan.helper.js';
-import { clearTicketRow, isAttendanceSheetEnabled } from './attendance-sheet.service.js';
+import { clearTicketRow, isAttendanceSheetEnabled, resyncTickets } from './attendance-sheet.service.js';
 import { loadCatalog } from './event-catalog.service.js';
 import { eventGroupKey, issueGroupInvite } from './event-group.service.js';
 import { sendEventGroupEmail, sendEventTicketsEmail } from './email.service.js';
 import {
   AdminTicket,
   createTicketsForExternalSale,
+  findEventTickets,
   findTicketByFolio,
   loadSeatPool,
   renderTicketQrBuffer,
@@ -214,6 +215,44 @@ export const reactivateAttendee = async (rawFolio: string): Promise<AdminTicket>
   await setInviteRevoked(ticket, false);
   await syncSheetBestEffort(ticket, 'update');
   return toAdminTicket(ticket);
+};
+
+export interface SheetResyncSummary {
+  total: number;
+  updated: number;
+  added: number;
+}
+
+// "Reenviar al Sheet": vuelve a escribir todos los boletos del evento en su
+// pestaña, por si alguna escritura falló o la hoja se desacomodó. Guarda la
+// fila/pestaña donde quedó cada uno para que el check-in siga apuntando bien.
+export const resyncEventSheet = async (eventIdOrSlug: string): Promise<SheetResyncSummary> => {
+  if (!isAttendanceSheetEnabled()) throw new AttendeeError(409, 'El Google Sheet de asistencia no está configurado');
+  const { tickets } = await findEventTickets(eventIdOrSlug);
+  if (tickets.length === 0) throw new AttendeeError(404, 'Este evento no tiene boletos');
+  // Orden de compra (más antiguos arriba) para los que se agregan al final.
+  const time = (t: IEventTicketDocument): number => new Date(t.purchasedAt ?? 0).getTime() || 0;
+  const ordered = [...tickets].sort((a, b) => time(a) - time(b));
+  let results;
+  try {
+    results = await resyncTickets(ordered);
+  } catch (err) {
+    throw new AttendeeError(502, `Google Sheets rechazó la escritura: ${(err as Error).message}`);
+  }
+  const byFolio = new Map(ordered.map((t) => [t.folio, t]));
+  for (const r of results) {
+    const t = byFolio.get(r.folio);
+    if (t && (t.sheetRow !== r.row || t.sheetTab !== r.tab)) {
+      t.sheetRow = r.row;
+      t.sheetTab = r.tab;
+      await t.save();
+    }
+  }
+  return {
+    total: results.length,
+    updated: results.filter((r) => r.action === 'updated').length,
+    added: results.filter((r) => r.action === 'added').length,
+  };
 };
 
 // Eliminar de verdad: solo altas manuales (un error de captura del admin). Lo de

@@ -134,6 +134,15 @@ export const deleteAttendee: RequestHandler = async (req, res) => {
   }
 };
 
+// POST /events/:id/attendees/resync-sheet (admin) — reescribe todos los boletos en el Sheet
+export const resyncAttendeesSheet: RequestHandler = async (req, res) => {
+  try {
+    success(res, await attendeeAdmin.resyncEventSheet(req.params.id));
+  } catch (err) {
+    attendeeFail(res, err);
+  }
+};
+
 // GET /events/:id/attendees (admin) — id de Event o slug de catálogo
 export const listEventAttendees: RequestHandler = async (req, res) => {
   try {
