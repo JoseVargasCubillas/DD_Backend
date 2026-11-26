@@ -184,7 +184,8 @@ const withTabLock = <T>(tab: string, fn: () => Promise<T>): Promise<T> => {
 // calcula la siguiente fila libre a partir de la última fila con datos en A:N
 // y se escribe siempre desde la columna A.
 export const appendTicketRow = async (ticket: IEventTicketDocument): Promise<{ tab: string; row: number } | null> => {
-  if (!SHEET_ID) return null;
+  // Las bajas (boletos anulados) no van al Sheet.
+  if (!SHEET_ID || ticket.status === 'void') return null;
   const wanted = ticket.sheetTab || buildTabTitle(ticket.eventTitle, ticket.eventDate);
   await ensureEventTab(wanted);
   const tab = actualTabName(wanted);
@@ -210,7 +211,7 @@ export interface SheetResyncResult {
   folio: string;
   tab: string;
   row: number;
-  action: 'updated' | 'added';
+  action: 'updated' | 'added' | 'removed';
 }
 
 // Reescribe en el Sheet todos los boletos dados (botón "Reenviar al Sheet" de la
@@ -218,7 +219,8 @@ export interface SheetResyncResult {
 // folio en la columna A; si no está, usa su sheetRow guardado cuando esa fila
 // está libre, y si no, la siguiente fila libre. Escribe todo en una sola
 // llamada (y el color en otra) para no agotar la cuota de la API con eventos
-// grandes. Las filas repetidas del mismo folio se vacían.
+// grandes. Las filas repetidas del mismo folio se vacían, y las bajas (boletos
+// anulados) se quitan de la hoja en vez de escribirse.
 export const resyncTickets = async (tickets: IEventTicketDocument[]): Promise<SheetResyncResult[]> => {
   if (!SHEET_ID || tickets.length === 0) return [];
   const byTab = new Map<string, IEventTicketDocument[]>();
@@ -249,6 +251,20 @@ export const resyncTickets = async (tickets: IEventTicketDocument[]): Promise<Sh
       const clearRanges: string[] = [];
       for (const t of group) {
         const found = folioRows.get(t.folio.toUpperCase()) ?? [];
+        if (t.status === 'void') {
+          for (const r of found) {
+            clearRanges.push(`'${tab}'!A${r}:${LAST_COL_LETTER}${r}`);
+            format.push({
+              repeatCell: {
+                range: { sheetId, startRowIndex: r - 1, endRowIndex: r, startColumnIndex: 0, endColumnIndex: HEADERS.length },
+                cell: { userEnteredFormat: { backgroundColor: WHITE, textFormat: { bold: false } } },
+                fields: 'userEnteredFormat(backgroundColor,textFormat.bold)',
+              },
+            });
+          }
+          results.push({ folio: t.folio, tab, row: 0, action: 'removed' });
+          continue;
+        }
         let row = found[0];
         let action: SheetResyncResult['action'] = 'updated';
         // Solo filas libres dentro de la zona con datos: las de más abajo podrían
@@ -286,11 +302,15 @@ export const resyncTickets = async (tickets: IEventTicketDocument[]): Promise<Sh
       if (clearRanges.length) {
         await sheets.spreadsheets.values.batchClear({ spreadsheetId: SHEET_ID, requestBody: { ranges: clearRanges } });
       }
-      await sheets.spreadsheets.values.batchUpdate({
-        spreadsheetId: SHEET_ID,
-        requestBody: { valueInputOption: 'RAW', data },
-      });
-      await sheets.spreadsheets.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { requests: format } });
+      if (data.length) {
+        await sheets.spreadsheets.values.batchUpdate({
+          spreadsheetId: SHEET_ID,
+          requestBody: { valueInputOption: 'RAW', data },
+        });
+      }
+      if (format.length) {
+        await sheets.spreadsheets.batchUpdate({ spreadsheetId: SHEET_ID, requestBody: { requests: format } });
+      }
     });
   }
   return results;
@@ -304,14 +324,59 @@ const findRowByFolio = async (tab: string, folio: string): Promise<number | null
   return idx >= 0 ? idx + 1 : null;
 };
 
+// Quita de la hoja un boleto dado de baja: vacía toda fila con su folio (y la
+// que tenía guardada, si sigue siendo suya) y le quita el color.
+const removeTicketRow = async (ticket: IEventTicketDocument): Promise<void> => {
+  const wanted = ticket.sheetTab || buildTabTitle(ticket.eventTitle, ticket.eventDate);
+  const sheetId = await ensureEventTab(wanted);
+  const tab = actualTabName(wanted);
+  await withTabLock(tab, async () => {
+    const sheets = getSheets();
+    const res = await sheets.spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `'${tab}'!A:A` });
+    const folio = ticket.folio.toUpperCase();
+    const rows = (res.data.values ?? [])
+      .map((r, i) => (i > 0 && String(r[0] ?? '').trim().toUpperCase() === folio ? i + 1 : 0))
+      .filter((r) => r > 0);
+    if (rows.length === 0) return;
+    await sheets.spreadsheets.values.batchClear({
+      spreadsheetId: SHEET_ID,
+      requestBody: { ranges: rows.map((r) => `'${tab}'!A${r}:${LAST_COL_LETTER}${r}`) },
+    });
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SHEET_ID,
+      requestBody: {
+        requests: rows.map((r) => ({
+          repeatCell: {
+            range: { sheetId, startRowIndex: r - 1, endRowIndex: r, startColumnIndex: 0, endColumnIndex: HEADERS.length },
+            cell: { userEnteredFormat: { backgroundColor: WHITE, textFormat: { bold: false } } },
+            fields: 'userEnteredFormat(backgroundColor,textFormat.bold)',
+          },
+        })),
+      },
+    });
+  });
+};
+
 // Reescribe la fila completa del boleto (estado, hora, quién) y la pinta
-// verde si asistió / blanca si se deshizo el check-in.
+// verde si asistió / blanca si se deshizo el check-in. Si el boleto está dado
+// de baja, en vez de escribirlo lo quita de la hoja.
 export const syncTicketRow = async (ticket: IEventTicketDocument): Promise<{ tab: string; row: number } | null> => {
   if (!SHEET_ID) return null;
+  if (ticket.status === 'void') {
+    await removeTicketRow(ticket);
+    return null;
+  }
   const wanted = ticket.sheetTab || buildTabTitle(ticket.eventTitle, ticket.eventDate);
   const sheetId = await ensureEventTab(wanted);
   const tab = actualTabName(wanted);
   let row = ticket.sheetRow ?? null;
+  // La fila guardada puede haberla ocupado otro boleto (p. ej. tras una baja
+  // que liberó la última fila): solo se usa si está vacía o es de este folio.
+  if (row && row >= 2) {
+    const cell = await getSheets().spreadsheets.values.get({ spreadsheetId: SHEET_ID, range: `'${tab}'!A${row}` });
+    const owner = String(cell.data.values?.[0]?.[0] ?? '').trim().toUpperCase();
+    if (owner && owner !== ticket.folio.toUpperCase()) row = null;
+  }
   if (!row || row < 2) row = await findRowByFolio(tab, ticket.folio);
   if (!row) {
     const appended = await appendTicketRow(ticket);

@@ -221,6 +221,8 @@ export interface SheetResyncSummary {
   total: number;
   updated: number;
   added: number;
+  // Bajas: se quitan de la hoja.
+  removed: number;
 }
 
 // "Reenviar al Sheet": vuelve a escribir todos los boletos del evento en su
@@ -241,6 +243,7 @@ export const resyncEventSheet = async (eventIdOrSlug: string): Promise<SheetResy
   }
   const byFolio = new Map(ordered.map((t) => [t.folio, t]));
   for (const r of results) {
+    if (r.action === 'removed') continue;
     const t = byFolio.get(r.folio);
     if (t && (t.sheetRow !== r.row || t.sheetTab !== r.tab)) {
       t.sheetRow = r.row;
@@ -249,9 +252,10 @@ export const resyncEventSheet = async (eventIdOrSlug: string): Promise<SheetResy
     }
   }
   return {
-    total: results.length,
+    total: results.filter((r) => r.action !== 'removed').length,
     updated: results.filter((r) => r.action === 'updated').length,
     added: results.filter((r) => r.action === 'added').length,
+    removed: results.filter((r) => r.action === 'removed').length,
   };
 };
 
