@@ -415,6 +415,12 @@ const ticketCard = (t: ReceiptTicketCard, orderRef: string): string => `
       </td>
     </tr>
     <tr>
+      <td style="padding:16px 22px;border-top:1px solid #ded6ca;background:#f7f2ea;">
+        <div style="font-size:9px;letter-spacing:2.4px;text-transform:uppercase;color:#17130f;font-weight:700;">Términos y condiciones de acceso</div>
+        <div style="margin-top:6px;font-size:11px;line-height:1.55;color:#5f574f;">Este boleto es válido exclusivamente para la fecha y el evento indicados. No admite cambios de fecha, transferencias a futuras ediciones ni reembolsos. Al adquirirlo, el participante acepta estas condiciones.</div>
+      </td>
+    </tr>
+    <tr>
       <td style="padding:0;">
         <a href="${escapeHtml(t.url)}" style="display:block;text-decoration:none;background:#fffdf8;border-top:1px solid #ded6ca;">
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
